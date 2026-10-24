@@ -57,6 +57,12 @@ final class HomeApps {
     static final int APP = 0, LIVE_TV = 1, INPUT = 2, ALL_APPS = 3, SETTINGS = 4, ANDROID_SETTINGS = 5;
     /** The "HDMI Inputs" button: opens the bottom drawer on the inputs (the home screen handles it). */
     static final int INPUTS = 7;
+    /** The connection, a round button top right: the home screen draws its state; it opens the TV's Wi-Fi settings. */
+    static final int NETWORK = 8;
+
+    static Item network() {
+        return shortcut(NETWORK, "network", "Wi-Fi", null);
+    }
     /** Image size of each card (16:9; on screen it shows up to ~330 px wide). */
     static final int TILE_W = 384, TILE_H = 216;
 
@@ -94,6 +100,28 @@ final class HomeApps {
     static final int MAX_SHELF = 8;
     /** Live TV apps of some brands (the antenna's channels open through the standard Android request first). */
     static final String[] LIVE_TV_APPS = {"com.tcl.tv", "com.google.android.tv", "com.mediatek.wwtv.tvcenter", "com.sony.dtv.tvx"};
+    /** TV providers' apps (TV over the internet): installed, one takes the home screen's Live TV button. */
+    static final String[] PROVIDER_TV_APPS = {
+        "com.ug.eon.android.tv",    // EON (United Group: Telemach, SBB, Nova...)
+    };
+
+    /** The TV provider's app for the Live TV button, in its style (the TV symbol), or null if none is installed. */
+    static Item providerTv(Context c) {
+        PackageManager pm = c.getPackageManager();
+        for (String pkg : PROVIDER_TV_APPS) {
+            if (launchIntent(pm, pkg) == null) continue;
+            String label;
+            try {
+                label = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString();
+            } catch (PackageManager.NameNotFoundException e) {
+                continue;
+            }
+            Item it = app(pkg, label);
+            it.symbol = "live_tv";
+            return it;
+        }
+        return null;
+    }
     /** Kept out of "All Apps" (only hidden, still installed). Add the ones your TV shows that you never use. */
     private static final Set<String> HIDDEN = new HashSet<>(java.util.Arrays.asList(
             "com.google.android.play.games",        // Google Play Games
@@ -231,12 +259,26 @@ final class HomeApps {
         return it;
     }
 
-    /** For the bottom drawer: live TV and every HDMI input (the ones with no device are shown dimmed). */
+    /**
+     * For the bottom drawer: live TV (the TV provider's app, such as EON, when installed) and every HDMI input (the ones
+     * with no device are shown dimmed).
+     */
     static List<Item> allInputs(Context c) {
         List<Item> items = new ArrayList<>();
-        if (liveTv(c) != null) items.add(shortcut(LIVE_TV, "live", Ui.tr("TV ao Vivo", "Live TV"), "tv"));
+        Item provider = providerTv(c);
+        if (provider != null) {
+            provider.symbol = "tv";     // the drawer's Live TV symbol
+            items.add(provider);
+        } else if (liveTv(c) != null) {
+            items.add(shortcut(LIVE_TV, "live", Ui.tr("TV ao Vivo", "Live TV"), "tv"));
+        }
         items.addAll(inputs(c, true));
         return items;
+    }
+
+    /** Live TV: the antenna's channels or the TV provider's app that stands in for them. */
+    static boolean isLiveTv(Item it) {
+        return it.kind == LIVE_TV || (it.kind == APP && java.util.Arrays.asList(PROVIDER_TV_APPS).contains(it.pkg));
     }
 
     private static List<Item> inputs(Context c) {
@@ -377,6 +419,9 @@ final class HomeApps {
                 break;
             case ANDROID_SETTINGS:
                 intent = new Intent(Settings.ACTION_SETTINGS);
+                break;
+            case NETWORK:
+                intent = new Intent(Settings.ACTION_WIFI_SETTINGS);
                 break;
             default:
                 return false;

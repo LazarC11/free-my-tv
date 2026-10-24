@@ -154,6 +154,7 @@ final class HomeMode {
     }
 
     private static final String REMOTE_SERVICE = PKG + "/" + PKG + ".RemoteKeyService";
+    private static final String NOW_PLAYING = PKG + "/" + PKG + ".NowPlaying";
     private static final Pattern SERVICE = Pattern.compile("[\\w.]+/[\\w.$]+");
 
     /** Adds ours to the enabled accessibility services (keeping the others, like TalkBack), or takes it out. */
@@ -268,6 +269,8 @@ final class HomeMode {
                     AppLog.w("remote buttons service: " + e.getMessage());
                 }
             }
+            adb.shell("cmd notification allow_listener " + NOW_PLAYING);   // Explore's watched cards and the player
+            adb.shell("pm grant " + PKG + " android.permission.RECORD_AUDIO");     // the equalizer (Beat): the sound output
             notice(c, Ui.tr("Free My TV ligado: Início e tela de descanso novos, " + disabled.size() + " apps desligados.",
                     "Free My TV is on: new home screen and screensaver, " + disabled.size() + " apps turned off."));
             busy(c, Ui.tr("Medindo o Free My TV…", "Measuring Free My TV…"));
@@ -308,6 +311,8 @@ final class HomeMode {
             } catch (IOException e) {
                 AppLog.w("remote buttons service: " + e.getMessage());
             }
+            adb.shell("cmd notification disallow_listener " + NOW_PLAYING);
+            adb.shell("pm revoke " + PKG + " android.permission.RECORD_AUDIO");
             s = state(c);
             s.put("mode", ORIGINAL).put("since", System.currentTimeMillis()).put("homeReverted", false)
                     .put("disabled", new JSONArray(failed));

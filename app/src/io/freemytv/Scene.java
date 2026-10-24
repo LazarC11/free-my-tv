@@ -170,14 +170,23 @@ final class Scene {
             glass(c, r, radius, tint, Math.max(0.5f, tintAlpha), 0, 0, lift, 1, alpha);
             return;
         }
+        // Settings > Liquid Glass (g, 0 to 1; about 0.25 is the original look): clearer (less tint), bending more,
+        // brighter highlights, a lighter background in it
+        float g = Prefs.glassAmount();
         liquid.setFloatUniform("center", r.centerX(), r.centerY());
         liquid.setFloatUniform("halfSize", r.width() / 2, r.height() / 2);
         liquid.setFloatUniform("radius", Math.min(radius, Math.min(r.width(), r.height()) / 2));
-        liquid.setFloatUniform("tint", Color.red(tint) / 255f, Color.green(tint) / 255f, Color.blue(tint) / 255f, tintAlpha);
+        liquid.setFloatUniform("tint", Color.red(tint) / 255f, Color.green(tint) / 255f, Color.blue(tint) / 255f,
+                Math.max(0, Math.min(1, tintAlpha * (1.3f - 1.15f * g))));
         liquid.setFloatUniform("lift", lift);
-        liquid.setFloatUniform("band", Math.max(1, band));
-        liquid.setFloatUniform("refraction", refraction);
-        liquid.setFloatUniform("specular", specular);
+        liquid.setFloatUniform("band", Math.max(1, band * (0.8f + 0.8f * g)));
+        liquid.setFloatUniform("refraction", refraction * (0.5f + 2 * g));
+        liquid.setFloatUniform("specular", specular * (0.7f + 0.8f * g));
+        // The background seen in the glass gets the same brightness as on screen (HomeView.drawBrightness: white at
+        // 0.7 × the setting, black at 0.9 ×), so glass and background match; more glass makes it clearer, not whiter
+        float b = Prefs.brightnessAmount();
+        liquid.setFloatUniform("lighten", b > 0 ? 0.7f * b : 0.9f * b);
+        liquid.setFloatUniform("clarity", g);
         liquidPaint.setAlpha(Math.round(255 * Math.min(1, alpha)));
         c.drawRect(r.left - 1, r.top - 1, r.right + 1, r.bottom + 1, liquidPaint);
         liquidPaint.setAlpha(255);

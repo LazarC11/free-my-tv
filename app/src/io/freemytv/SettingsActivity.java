@@ -114,9 +114,9 @@ public class SettingsActivity extends Activity {
 
     static final class SettingsView extends View implements Choreographer.FrameCallback {
         private static final int MAIN = 0, HOME_CHOICE = 1, HOME_SETTINGS = 2, REMOTE_KEYS = 3, PICKER = 4, SHELF_EDIT = 5;
-        private static final float LIST_ROW_H = 68, LIST_ROW_GAP = 6;
+        private static final float LIST_ROW_H = 60, LIST_ROW_GAP = 5;     // twelve rows (thirteen with the dollar) fit
         private static final int PICK_VISIBLE = 9;
-        private static final float LIST_X = 1000, LIST_R = 1824, LIST_TOP = 186, ROW_H = 74, ROW_GAP = 8, CHOICE_H = 104;
+        private static final float LIST_X = 1000, LIST_R = 1824, LIST_TOP = 170, ROW_H = 74, ROW_GAP = 8, CHOICE_H = 104;
         private static final int AMBER = 0xFFFFC266, INK = 0xFF1C1C1E;
 
         private final SettingsActivity activity;
@@ -133,7 +133,8 @@ public class SettingsActivity extends Activity {
         private static final int PICK_CITY = 0;
         private final List<String[]> cities = new ArrayList<>();
         private String cityStatus = "";
-        private final RectF tmp = new RectF(), rowRect = new RectF(), focusBox = new RectF();
+        private final RectF tmp = new RectF(), rowRect = new RectF(), focusBox = new RectF(), sliderRect = new RectF();
+        private final Paint sliderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private JSONObject state = new JSONObject(), recs = new JSONObject();
         private boolean hasKey;
         private int screen = MAIN, focus;
@@ -625,8 +626,13 @@ public class SettingsActivity extends Activity {
         // MARK: - Home Settings and Remote Buttons
 
         private static final String[] LANGUAGES = {"auto", "pt", "en", "es", "de", "ru"}, UNITS = {"auto", "C", "F"}, THEMES = {"auto", "light", "dark"};
-        /** Home Settings: language, temperature, theme, weather, quotes, then one row per coin. */
-        private static final int CITY_ROW = 4, COIN_ROWS = 6;
+        private static final String[] SAVER_PHOTOS = {"shows", "nature", "architecture"}, CLOCK_SIZES = {"small", "medium", "large"};
+        /**
+         * Home Settings: language, temperature, theme, the screensaver's photos and clock, weather, city, quotes, then
+         * one row per coin.
+         */
+        private static final int PHOTOS_ROW = 3, CLOCK_ROW = 4, GLASS_ROW = 5, WEATHER_ROW = 6, CITY_ROW = 7, QUOTES_ROW = 8,
+                COIN_ROWS = 9;
 
         private boolean dollar() {
             return "BRL".equalsIgnoreCase(Config.CURRENCY.trim());
@@ -637,6 +643,9 @@ public class SettingsActivity extends Activity {
             l.add(Ui.tr("Idioma", "Language"));
             l.add(Ui.tr("Temperatura", "Temperature"));
             l.add(Ui.tr("Tema", "Theme"));
+            l.add(Ui.tr("Fotos da proteção de tela", "Screensaver photos"));
+            l.add(Ui.tr("Relógio da proteção de tela", "Screensaver clock"));
+            l.add("Liquid Glass");
             l.add(Ui.tr("Widget do clima", "Weather widget"));
             l.add(Ui.tr("Cidade", "City"));
             l.add(Ui.tr("Widget de cotações", "Quotes widget"));
@@ -657,9 +666,15 @@ public class SettingsActivity extends Activity {
             v[1] = unit.equals("C") ? "°C" : unit.equals("F") ? "°F" : Ui.tr("Automática", "Automatic");
             String theme = Prefs.theme();
             v[2] = theme.equals("light") ? Ui.tr("Claro", "Light") : theme.equals("dark") ? Ui.tr("Escuro", "Dark") : Ui.tr("Automático", "Automatic");
-            v[3] = onOff(Prefs.weather());
+            String photos = Prefs.saverPhotos();
+            v[PHOTOS_ROW] = photos.equals("nature") ? Ui.tr("Natureza", "Nature")
+                    : photos.equals("architecture") ? Ui.tr("Arquitetura", "Architecture") : Ui.tr("Filmes e séries", "Movies and shows");
+            String size = Prefs.clockSize();
+            v[CLOCK_ROW] = size.equals("large") ? Ui.tr("Grande", "Large") : size.equals("medium") ? Ui.tr("Médio", "Medium") : Ui.tr("Pequeno", "Small");
+            v[GLASS_ROW] = Prefs.glass() + "%";
+            v[WEATHER_ROW] = onOff(Prefs.weather());
             v[CITY_ROW] = !cityStatus.isEmpty() ? cityStatus : Prefs.city().isEmpty() ? "—" : Prefs.city();
-            v[5] = onOff(Prefs.quotes());
+            v[QUOTES_ROW] = onOff(Prefs.quotes());
             // No quotes widget, nowhere to show prices: the coins read as off (and stay locked) until it is back on.
             for (int i = COIN_ROWS; i < v.length; i++) v[i] = onOff(Prefs.quotes() && Prefs.coin(i - COIN_ROWS));
             return v;
@@ -731,9 +746,22 @@ public class SettingsActivity extends Activity {
                     Prefs.setTheme(THEMES[(at + dir + THEMES.length) % THEMES.length]);
                     break;
                 }
-                case 3: Prefs.setWeather(!Prefs.weather()); break;
+                case PHOTOS_ROW: {
+                    int at = java.util.Arrays.asList(SAVER_PHOTOS).indexOf(Prefs.saverPhotos());
+                    Prefs.setSaverPhotos(SAVER_PHOTOS[(at + dir + SAVER_PHOTOS.length) % SAVER_PHOTOS.length]);
+                    return;
+                }
+                case CLOCK_ROW: {
+                    int at = java.util.Arrays.asList(CLOCK_SIZES).indexOf(Prefs.clockSize());
+                    Prefs.setClockSize(CLOCK_SIZES[(at + dir + CLOCK_SIZES.length) % CLOCK_SIZES.length]);
+                    return;
+                }
+                case GLASS_ROW:
+                    Prefs.setGlass(Prefs.glass() + 10 * dir);     // ←→ here; OK opens the live panel (activate)
+                    return;
+                case WEATHER_ROW: Prefs.setWeather(!Prefs.weather()); break;
                 case CITY_ROW: return;
-                case 5: Prefs.setQuotes(!Prefs.quotes()); break;
+                case QUOTES_ROW: Prefs.setQuotes(!Prefs.quotes()); break;
                 default:
                     if (!Prefs.quotes()) return;
                     Prefs.setCoin(focus - COIN_ROWS, !Prefs.coin(focus - COIN_ROWS));
@@ -936,7 +964,21 @@ public class SettingsActivity extends Activity {
                 if (locked) rowLabel.setColor(blend(0x73FFFFFF, 0x731C1C1E, f));
                 float base = rowRect.centerY() + Ui.halfCap(rowLabel);
                 c.drawText(labels[i], rowRect.left + 30 * k, base, rowLabel);
-                c.drawText(values[i], rowRect.right - 30 * k, base, rowValue);
+                if (!keys && i == GLASS_ROW) {
+                    // A slider: the track, filled up to the value, with a knob; the value beside it
+                    float len = 240 * k, right = rowRect.right - 30 * k, cy = rowRect.centerY(), t = 6 * k;
+                    float done = len * Prefs.glass() / 100f, left = right - len;
+                    sliderPaint.setColor(blend(0x40FFFFFF, 0x401C1C1E, f));
+                    sliderRect.set(left, cy - t / 2, right, cy + t / 2);
+                    c.drawRoundRect(sliderRect, t / 2, t / 2, sliderPaint);
+                    sliderPaint.setColor(blend(0xF2FFFFFF, INK, f));
+                    sliderRect.set(left, cy - t / 2, left + done, cy + t / 2);
+                    c.drawRoundRect(sliderRect, t / 2, t / 2, sliderPaint);
+                    c.drawCircle(left + done, cy, 12 * k, sliderPaint);
+                    c.drawText(values[i], left - 28 * k, base, rowValue);
+                } else {
+                    c.drawText(values[i], rowRect.right - 30 * k, base, rowValue);
+                }
             }
             Paint hint = Ui.text(Ui.regular, 23 * k, 0x8CFFFFFF);
             float hy = (LIST_TOP + 20 + labels.length * (LIST_ROW_H + LIST_ROW_GAP) + 36) * k;
@@ -981,6 +1023,12 @@ public class SettingsActivity extends Activity {
                 openPicker(focus + 1);
             } else if (screen == HOME_SETTINGS && focus == CITY_ROW) {
                 askCity();
+                return;
+            } else if (screen == HOME_SETTINGS && focus == GLASS_ROW) {
+                // The Liquid Glass panel is on the home screen, where its changes show live
+                activity.startActivity(new Intent(HomeActivity.ACTION_GLASS).setClass(c, HomeActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                activity.finish();
                 return;
             } else if (screen == HOME_SETTINGS) {
                 adjust(1);

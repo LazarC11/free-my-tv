@@ -127,6 +127,10 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   box-shadow: 0 8px 26px rgba(0, 0, 0, 0.22);
 }
 .night #title, .night .tab.on { color: #F5F5F7; }
+/* The title's weather, after the time: dimmer and lighter. */
+#title .wx { margin-left: 40px; color: #6E6E73; font-weight: 500; }
+#title .wx .sym { width: 62px; height: 62px; vertical-align: -4px; margin-right: 14px; }
+.night #title .wx { color: #98989D; }
 .night .tab { color: rgba(245, 245, 247, 0.62); }
 .night .tab.focus { color: #1D1D1F; box-shadow: 0 8px 26px rgba(0, 0, 0, 0.4); }
 

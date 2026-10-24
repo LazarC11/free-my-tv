@@ -49,6 +49,64 @@ final class Backdrop {
         nightImage = night == null ? null : Bitmap.createBitmap(night, FW, FH, Bitmap.Config.ARGB_8888);
     }
 
+    private int[] dayFrostUp, nightFrostUp, dayMatched, nightMatched;
+    private float dayBlur = -1, nightBlur = -1;
+
+    /**
+     * What the glass shows (GW × GH): exactly the background on screen around it, the less blurred version under the
+     * fully blurred one by Liquid Glass > Background blur, as drawLightImage draws it. The glass used to read only the
+     * less blurred one, a different picture from its surroundings (it looked like a screenshot). On the UI thread; made
+     * again only when the blur changes.
+     */
+    int[] matchedGlass(boolean atNight, float blur) {
+        int[] sharp = atNight ? nightGlass : lightGlass;
+        Bitmap blurred = atNight ? nightImage : lightImage;
+        if (sharp == null || blurred == null) return sharp;
+        int[] out = atNight ? nightMatched : dayMatched;
+        if (out != null && (atNight ? nightBlur : dayBlur) == blur) return out;
+        int[] up = atNight ? nightFrostUp : dayFrostUp;
+        if (up == null) {
+            Bitmap scaled = Bitmap.createScaledBitmap(blurred, GW, GH, true);
+            up = new int[GW * GH];
+            scaled.getPixels(up, 0, GW, 0, 0, GW, GH);
+            scaled.recycle();
+            if (atNight) nightFrostUp = up;
+            else dayFrostUp = up;
+        }
+        if (out == null) out = new int[GW * GH];
+        for (int i = 0; i < out.length; i++) out[i] = mix(sharp[i], up[i], blur);
+        if (atNight) {
+            nightMatched = out;
+            nightBlur = blur;
+        } else {
+            dayMatched = out;
+            dayBlur = blur;
+        }
+        return out;
+    }
+
+    private static int mix(int a, int b, float f) {
+        int ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
+        int r = Math.round(ar + (((b >> 16) & 255) - ar) * f), g = Math.round(ag + (((b >> 8) & 255) - ag) * f);
+        int bl = Math.round(ab + ((b & 255) - ab) * f);
+        return 0xFF000000 | (r << 16) | (g << 8) | bl;
+    }
+
+    private Bitmap lightSharp, nightSharp;
+
+    /**
+     * The background less blurred (the glass's version, GW × GH): drawn under the fully blurred one for Liquid Glass >
+     * Background blur. Made the first time it's needed.
+     */
+    Bitmap sharpImage(boolean atNight) {
+        if (atNight) {
+            if (nightSharp == null && nightGlass != null) nightSharp = Bitmap.createBitmap(nightGlass, GW, GH, Bitmap.Config.ARGB_8888);
+            return nightSharp;
+        }
+        if (lightSharp == null && lightGlass != null) lightSharp = Bitmap.createBitmap(lightGlass, GW, GH, Bitmap.Config.ARGB_8888);
+        return lightSharp;
+    }
+
     static Backdrop make(Bitmap src, boolean forLight) {
         Bitmap out = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(out);
@@ -59,7 +117,8 @@ final class Backdrop {
         src.recycle();
         if (forLight) {
             // Light design: everything comes from the photo without scrims.
-            Bitmap wide = card(out, WIDE_W, WIDE_H), tall = card(out, TALL_W, TALL_H);
+            // Only the wide card: the home screen cuts the narrow ones from it (cards change width as the selection moves)
+            Bitmap wide = card(out, WIDE_W, WIDE_H), tall = null;
             int[] frost = reduce(out, FW, FH, 3, 3);
             int[] light = whiten(frost.clone(), 0.82f);
             int[] glass = reduce(out, GW, GH, 2, 2);
@@ -139,6 +198,12 @@ final class Backdrop {
             out = copy;
         }
         return new Bitmap[] {out, frost};
+    }
+
+    /** The frosted version (1/PHOTO_FROST, blurred) of a full-screen image, for the screensaver's glass clock. */
+    static Bitmap frost(Bitmap full) {
+        int fw = full.getWidth() / PHOTO_FROST, fh = full.getHeight() / PHOTO_FROST;
+        return Bitmap.createBitmap(reduce(full, fw, fh, 3, 2), fw, fh, Bitmap.Config.ARGB_8888);
     }
 
     /** The center of the photo at the card's aspect ratio, filtered down (halving while possible) to the exact size. */
@@ -234,7 +299,7 @@ final class Backdrop {
     }
 
     /** Average luminance (0 to 1) of a rectangle given as fractions of the image, by sampling. */
-    private static float luminance(Bitmap b, float x0, float y0, float x1, float y1) {
+    static float luminance(Bitmap b, float x0, float y0, float x1, float y1) {
         float sum = 0;
         int count = 0;
         for (int j = 0; j < 24; j++) {

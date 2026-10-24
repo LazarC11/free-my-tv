@@ -152,6 +152,8 @@ final class Shaders {
         "uniform float band;\n" +
         "uniform float refraction;\n" +
         "uniform float specular;\n" +
+        "uniform float lighten;\n" +         // the background in the glass: lighter (> 0) or darker (< 0); Liquid Glass
+        "uniform float clarity;\n" +         // 0 to 1: the glass's own color boost fades (clear glass shows it as it is)
         "float hash(float2 p) {\n" +
         "  p = fract(p * float2(123.34, 456.21));\n" +
         "  p += dot(p, p + 45.32);\n" +
@@ -182,7 +184,8 @@ final class Shaders {
         "    bg = bgAt(p);\n" +
         "  }\n" +
         "  half l = dot(bg, half3(0.2126, 0.7152, 0.0722));\n" +
-        "  bg = mix(half3(l), bg, 1.18) * 1.06;\n" +
+        "  bg = mix(half3(l), bg, half(mix(1.18, 1.06, clarity))) * half(mix(1.06, 1.0, clarity));\n" +
+        "  bg = lighten >= 0.0 ? mix(bg, half3(1.0), half(lighten)) : bg * half(1.0 + lighten);\n" +
         "  half3 col = mix(bg, tint.rgb, tint.a) + half3(lift);\n" +
         "  float ny = d.y / halfSize.y;\n" +
         "  col *= half(1.0 - 0.12 * smoothstep(0.1, 1.0, ny));\n" +

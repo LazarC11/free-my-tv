@@ -81,6 +81,90 @@ final class Prefs {
 
     static void setTheme(String v) { put("theme", v); }
 
+    // MARK: - Screensaver
+
+    /** Its photos: "shows" (the movies and shows picked for you), "nature" or "architecture" (Scenery). */
+    static String saverPhotos() {
+        String v = sp().getString("saverPhotos", "shows");
+        return v.equals("nature") || v.equals("architecture") ? v : "shows";
+    }
+
+    static void setSaverPhotos(String v) { put("saverPhotos", v); }
+
+    /** Its clock's size: "small", "medium" or "large". */
+    static String clockSize() {
+        String v = sp().getString("clockSize", "small");
+        return v.equals("medium") || v.equals("large") ? v : "small";
+    }
+
+    static void setClockSize(String v) { put("clockSize", v); }
+
+    // MARK: - Liquid Glass
+
+    // The look (the Liquid Glass panel on the home screen): changes show live, so they don't count as `version`
+    // changes (those make the home screen start over)
+    static volatile int lookVersion;
+
+    /** How glassy the glass is, 0 to 100: clearer, bending more, brighter highlights, a lighter background in it. */
+    static int glass() {
+        return Math.max(0, Math.min(100, sp().getInt("glass", 70)));
+    }
+
+    static void setGlass(int v) {
+        sp().edit().putInt("glass", Math.max(0, Math.min(100, v))).apply();
+        lookVersion++;
+    }
+
+    /** The background's brightness, -50 (darker) to 50 (lighter); 0 as it was made. */
+    static int brightness() {
+        return Math.max(-50, Math.min(50, sp().getInt("brightness", 0)));
+    }
+
+    static void setBrightness(int v) {
+        sp().edit().putInt("brightness", Math.max(-50, Math.min(50, v))).apply();
+        lookVersion++;
+    }
+
+    /** How blurred the background is, 0 (lightly) to 100 (fully, as it always was). */
+    static int blur() {
+        return Math.max(0, Math.min(100, sp().getInt("blur", 100)));
+    }
+
+    static void setBlur(int v) {
+        sp().edit().putInt("blur", Math.max(0, Math.min(100, v))).apply();
+        lookVersion++;
+    }
+
+    private static float glassAmount = -1, brightnessAmount, blurAmount;
+    private static int lookFor = -1;
+
+    /** The look as fractions, read again only after a change (the glass and the background ask on every frame). */
+    private static void look() {
+        if (lookFor == lookVersion && glassAmount >= 0) return;
+        lookFor = lookVersion;
+        glassAmount = glass() / 100f;
+        brightnessAmount = brightness() / 100f;
+        blurAmount = blur() / 100f;
+    }
+
+    /** glass() as 0 to 1. */
+    static float glassAmount() {
+        look();
+        return glassAmount;
+    }
+
+    /** brightness() as -0.5 to 0.5. */
+    static float brightnessAmount() {
+        look();
+        return brightnessAmount;
+    }
+
+    /** blur() as 0 to 1. */
+    static float blurAmount() {
+        look();
+        return blurAmount;
+    }
+
     // MARK: - City
 
     static String city() { return sp().getString("city", Config.CITY).trim(); }
@@ -127,9 +211,21 @@ final class Prefs {
             case KEY_NETFLIX: case KEY_VESTEL_NETFLIX: return "com.netflix.ninja";
             case KEY_YOUTUBE: return "com.google.android.youtube.tv";
             case KEY_PRIME: return "com.amazon.amazonvideo.livingroom";
-            case KEY_TCL_CHANNEL: return "";
+            case KEY_TCL_CHANNEL: return providerTv();
             default: return "";
         }
+    }
+
+    /**
+     * The channel button: the TV provider's app (EON) when installed (live TV comes from it, not the antenna), else
+     * nothing (the TV opens its own TCL Channel).
+     */
+    private static String providerTv() {
+        android.content.pm.PackageManager pm = app.getPackageManager();
+        for (String pkg : HomeApps.PROVIDER_TV_APPS) {
+            if (pm.getLeanbackLaunchIntentForPackage(pkg) != null || pm.getLaunchIntentForPackage(pkg) != null) return pkg;
+        }
+        return "";
     }
 
     // The key service runs in its own small process (:keys), so that a busy home screen can never delay the TV's keys.

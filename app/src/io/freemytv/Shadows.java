@@ -30,6 +30,14 @@ final class Shadows {
             c.drawRoundRect(shape, r, r, paint);
             return;
         }
+        drawSliced(c, shape, r, blur, paint);
+    }
+
+    /**
+     * Always from the cached nine-slice, on any Android: for shapes that change size on every frame (the home screen's
+     * cards widening and narrowing), where even Android 12+ blurs the whole shape again each frame.
+     */
+    void drawSliced(Canvas c, RectF shape, float r, float blur, Paint paint) {
         int radius = Math.max(0, Math.round(r)), b = Math.max(1, Math.round(blur));
         int m = (int) Math.ceil(b * 1.8f) + 1;        // how far the blur spreads outside the shape
         int corner = radius + 2 * m;                  // the slice that holds the curve and the blur on both sides of it

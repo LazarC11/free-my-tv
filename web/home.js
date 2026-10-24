@@ -1,6 +1,6 @@
 /*
  * The home screen for web-app TVs (LG webOS, Samsung Tizen), with the Android app's design and behavior (HomeView):
- *  - top: the "For You" title and the tabs (Explore, Movies, Shows); icon-only glass buttons at the right (Live TV,
+ *  - top: the time and the weather now, and the tabs (Explore, Movies, Shows); icon-only glass buttons at the right (Live TV,
  *    HDMI Inputs, Settings) and the crypto quotes at the end of the tab row;
  *  - three picks for this hour in the selected tab; the background is the first one's photo, blurred and almost white;
  *  - the glass shelf with the apps; ↓ opens the drawer (inputs, shortcuts, weather, prices); ↑ or Back closes it;
@@ -191,8 +191,23 @@
 
   var TAB_KIND = [null, 'movie', 'tv'];
 
+  /** The title: the time, then the weather now (symbol and temperature, dimmer), as on Android. */
+  var titleKey = '';
+  function renderTitle() {
+    var t = $('title'), w = Data.weather, time = Data.time(Date.now());
+    var key = time + '|' + (w ? w.code + ':' + w.isDay + ':' + Data.degrees(w.temp) : '');
+    if (key === titleKey) return;
+    titleKey = key;
+    t.innerHTML = '';
+    t.appendChild(document.createTextNode(time));
+    if (!w) return;
+    var wx = el('span', 'wx', t);
+    sym(Data.symbol(w.code, w.isDay), wx);
+    wx.appendChild(document.createTextNode(Data.degrees(w.temp)));
+  }
+
   function renderTop() {
-    $('title').textContent = tr('Para você', 'For You', 'Para ti');
+    renderTitle();
     var tabs = $('tabs');
     tabs.innerHTML = '';
     var names = [tr('Explorar', 'Explore', 'Explorar'), tr('Filmes', 'Movies', 'Películas'), tr('Séries', 'Shows', 'Series')];
@@ -882,6 +897,7 @@
   });
   setInterval(function () {
     renderClock();
+    renderTitle();
     checkNight();
     Data.refresh();
     if (!saverOn && !sheetOpen() && Date.now() - idleAt > SAVER_AFTER) showSaver();

@@ -9,6 +9,7 @@ import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.RadialGradient;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.graphics.RuntimeShader;
 import android.graphics.Shader;
 import android.os.Handler;
@@ -96,6 +97,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
     private final Scene scene = new Scene(false);
     private final HomeData data;
     private final Recs recs;
+    private final Scenery scenery;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private ExecutorService worker = Executors.newSingleThreadExecutor();
     private final Recording content = Recording.create("clock");     // without photos: the clock over the aurora
@@ -124,13 +126,45 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
     private Paint datePaint, clockPaint, weatherPaint, weatherDim, quotePaint, stalePaint;
     private Paint cornerDate, cornerQuote, cornerStale, cornerClock, labelPaint, metaPaint;
     private TextPaint titlePaint;
+    // Music playing (MediaNow): bottom left, instead of the photo's caption, the cover, the song and the equalizer
+    private final MediaNow media;
+    private static final int WIDE_BARS = 28;      // a wide row, much more than the home screen's four
+    private final Beat beat = new Beat(WIDE_BARS);
+    private Paint songPaint;
+    private final Paint coverPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    private final Paint coverShade = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint barPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Matrix coverMatrix = new Matrix();
+    private final RectF coverRect = new RectF(), barRect = new RectF();
+    private BitmapShader coverShader, prevShader;
+    private Bitmap coverFor, coverPrev;     // the cover shown and, while it fades in, the one before
+    private long coverAt;
+    private static final long COVER_FADE_MS = 700, BG_FADE_MS = 1500;
+    private Bitmap musicBgOld;              // the previous artist's background, while the new one fades in
+    private long bgSwapAt;
+    private String songFor, songText, artistFor, artistText;
+    private final float[] bars = new float[WIDE_BARS];
+    private long barsAt;
+    private Bitmap musicBg, musicFrost;
+    private BitmapShader musicFrostShader;
+    private boolean boundMusic;     // the glass reads the music's background: rebind the photos when it ends
+    private String musicBgFor;  // the artist the background is of
+    private float musicAlpha;
+    private long musicAt;
+    private final Paint bgPaint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
+    private final RectF bgRect = new RectF();
+    private final Paint trackPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private Paint timePaint;
+    private long elapsedFor = -1, durationFor = -1;
+    private String elapsedText = "", durationText = "";
 
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             if (!running) return;
             data.refreshIfStale();
             recs.refreshIfStale();
-            recs.prefetchAll();
+            if (Prefs.saverPhotos().equals("shows")) recs.prefetchAll();
+            else scenery.prefetch();
             dirty = true;
             chromeDirty = true;
             prepareNext();
@@ -142,6 +176,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         super(c);
         data = HomeData.get(c);
         recs = Recs.get(c);
+        scenery = Scenery.get(c);
         Shaders.dream(scene.palette);
         scene.setMotion(0.4f, 0.32f);
         scene.applyPalette();
@@ -155,7 +190,111 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         }
         black.setColor(0xFF000000);
         shadowPaint.setColor(0xFF000000);
+        media = new MediaNow(c, this::mediaChanged);
+        barPaint.setColor(0xEBFFFFFF);
     }
+
+    private void mediaChanged() {
+        if (running && media.shown() && media.playing) beat.start();
+        else beat.stop();
+        final String artist = media.shown() ? ArtistPhoto.main(media.artist) : "";
+        if (!artist.isEmpty() && !artist.equals(musicBgFor)) {
+            // The background: a photo of the artist (Spotify keeps its own backdrops inside the app), the same while
+            // the same artist plays; without one, the photos go on
+            musicBgFor = artist;
+            final Context context = getContext().getApplicationContext();
+            worker.execute(() -> {
+                Bitmap photo = ArtistPhoto.get(context, artist);
+                final Bitmap[] bg = photo == null ? null : artistBackground(photo);
+                handler.post(() -> {
+                    if (!artist.equals(musicBgFor)) {
+                        if (bg != null) for (Bitmap b : bg) b.recycle();
+                        return;
+                    }
+                    final Bitmap oldFrost = musicFrost;
+                    // The new artist's background cross-fades over the previous one (kept until then)
+                    if (musicBgOld != null) {
+                        final Bitmap older = musicBgOld;
+                        handler.postDelayed(older::recycle, 1000);
+                    }
+                    musicBgOld = musicBg;
+                    bgSwapAt = SystemClock.uptimeMillis();
+                    musicBg = bg == null ? null : bg[0];
+                    musicFrost = bg == null ? null : bg[1];
+                    musicFrostShader = null;
+                    if (musicFrost != null) {
+                        musicFrostShader = new BitmapShader(musicFrost, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+                        Frost.filter(musicFrostShader, BitmapShader.FILTER_MODE_LINEAR);
+                    }
+                    if (oldFrost != null) handler.postDelayed(oldFrost::recycle, 1000);
+                    invalidate();
+                });
+            });
+        }
+        invalidate();
+    }
+
+    /**
+     * An artist's photo as the screen's background: filling it (a square photo keeps the face, near its top, in view),
+     * darkened where the text goes (the bottom left, and the top right for the clock). Returns {background (on the
+     * GPU), frosted (what the glass clock shows through it)}.
+     */
+    private static Bitmap[] artistBackground(Bitmap photo) {
+        int w = 1920, h = 1080;
+        Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(out);
+        float scale = Math.max(w / (float) photo.getWidth(), h / (float) photo.getHeight());
+        float pw = photo.getWidth() * scale, ph = photo.getHeight() * scale;
+        float y = ph > h * 1.05f ? -(ph - h) * 0.22f : (h - ph) / 2;
+        c.drawBitmap(photo, null, new RectF((w - pw) / 2, y, (w + pw) / 2, y + ph), new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG));
+        photo.recycle();
+        // How bright it is where the music corner and the clock sit: a bright photo gets darker there (like the photos)
+        float lightCorner = Backdrop.luminance(out, 0, 0.55f, 0.65f, 0.98f);
+        float lightClock = Backdrop.luminance(out, 0.62f, 0.04f, 0.96f, 0.36f);
+        Paint p = new Paint(Paint.DITHER_FLAG);
+        c.drawColor(black(0.2f + 0.25f * Math.max(0, Math.max(lightCorner, lightClock) - 0.35f)));
+        float corner = Math.min(0.92f, 0.78f + 0.4f * Math.max(0, lightCorner - 0.3f));
+        p.setShader(new LinearGradient(0, h, 0, h * 0.35f, new int[] {black(corner), black(corner * 0.6f), 0},
+                new float[] {0, 0.45f, 1}, Shader.TileMode.CLAMP));
+        c.drawRect(0, h * 0.35f, w, h, p);
+        p.setShader(new LinearGradient(0, 0, w * 0.6f, 0, new int[] {black(0.45f), 0}, null, Shader.TileMode.CLAMP));
+        c.drawRect(0, 0, w * 0.6f, h, p);
+        // Behind the clock: a soft dark patch, stronger on a bright photo (the glass digits need contrast)
+        float clockDark = Math.min(0.75f, 0.42f + 0.6f * Math.max(0, lightClock - 0.3f));
+        float cx = w * 0.86f, cy = h * 0.15f;
+        RadialGradient patch = new RadialGradient(cx, cy, w * 0.36f, new int[] {black(clockDark), black(clockDark * 0.6f), black(clockDark * 0.15f), 0},
+                new float[] {0, 0.42f, 0.75f, 1}, Shader.TileMode.CLAMP);
+        Matrix m = new Matrix();
+        m.setScale(1, 0.72f, cx, cy);
+        patch.setLocalMatrix(m);
+        p.setShader(patch);
+        c.drawRect(w * 0.45f, 0, w, cy + w * 0.36f * 0.72f, p);
+        Bitmap frost = Backdrop.frost(out);
+        return new Bitmap[] {Backdrop.gpu(out), frost};
+    }
+
+    /** The music background over the photos, fading in and out with the music (the glass clock follows, drawGlass). */
+    private void drawMusicBackground(Canvas c, long up) {
+        float target = media.shown() && musicBg != null ? 1 : 0;
+        float dt = musicAt == 0 ? 0 : Math.min(0.1f, (up - musicAt) / 1000f);
+        musicAt = up;
+        musicAlpha = dt == 0 ? target : musicAlpha + (target - musicAlpha) * Math.min(1, dt * 2.5f);
+        if (musicAlpha < 0.004f || musicBg == null) return;
+        bgRect.set(0, 0, w, h);
+        // Another artist: the new background fades in over the previous one
+        float swap = musicBgOld == null ? 1 : fadeIn(up - bgSwapAt, BG_FADE_MS);
+        if (musicBgOld != null && swap < 1) {
+            bgPaint.setAlpha(Math.round(255 * musicAlpha));
+            c.drawBitmap(musicBgOld, null, bgRect, bgPaint);
+        } else if (musicBgOld != null) {
+            final Bitmap gone = musicBgOld;     // once the last frame that used it is drawn
+            musicBgOld = null;
+            handler.postDelayed(gone::recycle, 1000);
+        }
+        bgPaint.setAlpha(Math.round(255 * musicAlpha * swap));
+        c.drawBitmap(musicBg, null, bgRect, bgPaint);
+    }
+
 
     void start() {
         if (running) return;
@@ -164,14 +303,17 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         startedAt = clock();
         lastFrame = 0;
         failed.clear();
-        fallback = recs.showcase().isEmpty();
+        applyClockSize();
+        fallback = photos().isEmpty();
         data.addListener(this);
         recs.addListener(this);
+        scenery.addListener(this);     // a photo downloaded: the next one can be prepared
         data.refreshIfStale();
         recs.refreshIfStale();
         recs.prefetchAll();
         prepareNext();
         handler.postDelayed(tick, 60_000);
+        media.start();
         Choreographer.getInstance().postFrameCallback(this);
         invalidate();
     }
@@ -185,6 +327,9 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         handler.removeCallbacks(tick);
         data.removeListener(this);
         recs.removeListener(this);
+        scenery.removeListener(this);
+        media.stop();
+        beat.stop();
         // The photos stay in GPU memory until the garbage collector runs: release them now (after the last frame).
         final java.util.Set<Bitmap> gone = new java.util.HashSet<>();
         for (Slide s : new Slide[] {current, incoming, prepared}) {
@@ -243,21 +388,55 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         titlePaint.setLetterSpacing(0.005f);
         metaPaint = Ui.text(Ui.medium, 29 * k, 0xC7FFFFFF);
         metaPaint.setLetterSpacing(0.014f);
-        for (Paint p : new Paint[] {cornerDate, cornerQuote, cornerStale, cornerClock, labelPaint, titlePaint, metaPaint}) {
+        songPaint = Ui.text(Ui.displayMedium, 54 * k, 0xFFFFFFFF);
+        timePaint = Ui.numbers(Ui.medium, 26 * k, 0xD9FFFFFF);
+        for (Paint p : new Paint[] {cornerDate, cornerQuote, cornerStale, cornerClock, labelPaint, titlePaint, metaPaint, songPaint, timePaint}) {
             p.setShadowLayer(18 * k, 0, 2 * k, 0x66000000);
         }
+        coverShade.setColor(0x80000000);
+        coverShade.setMaskFilter(new android.graphics.BlurMaskFilter(26 * k, android.graphics.BlurMaskFilter.Blur.NORMAL));
+        songFor = artistFor = null;
         glassFor = "";
         dirty = true;
         chromeDirty = true;
         for (Slide s : new Slide[] {current, incoming, prepared}) if (s != null) recordCaption(s);
+        clockSizeFor = "";
+        applyClockSize();
+    }
+
+    private String clockSizeFor = "";
+
+    /** The clocks at the size picked in Settings > Screensaver clock (large: the size it always had). */
+    private void applyClockSize() {
+        String size = Prefs.clockSize();
+        if (w == 0 || size.equals(clockSizeFor)) return;
+        clockSizeFor = size;
+        float scale = size.equals("large") ? 1f : size.equals("medium") ? 0.8f : 0.6f;
+        cornerClock = Ui.numbers(Ui.displaySemibold, CLOCK_SIZE * scale * k, 0xF2FFFFFF);
+        cornerClock.setShadowLayer(18 * k, 0, 2 * k, 0x66000000);
+        clockPaint = Ui.numbers(Ui.thin, 280 * scale * k, 0xF2FFFFFF);
+        clockPaint.setTextAlign(Paint.Align.CENTER);
+        clockPaint.setLetterSpacing(-0.01f);
+        glassFor = "";      // the glass digits are made again at this size
+        dirty = true;
+        chromeDirty = true;
     }
 
     // MARK: - Photos
 
     /** Loads the next photo in the background (one at a time); once ready, it comes in at the right moment. */
+    /** The photos to cycle (Settings > Screensaver photos): the movies and shows picked for you, or Scenery's. */
+    private List<Recs.Pick> photos() {
+        return Prefs.saverPhotos().equals("shows") ? recs.showcase() : scenery.showcase();
+    }
+
+    private File photoFile(Recs.Pick p) {
+        return Scenery.isScenery(p) ? scenery.readyImage(p) : recs.readyImage(p);
+    }
+
     private void prepareNext() {
         if (!running || decoding || prepared != null) return;
-        List<Recs.Pick> list = recs.showcase();
+        List<Recs.Pick> list = photos();
         if (list.isEmpty()) return;
         Slide last = incoming != null ? incoming : current;
         int start = 0;
@@ -283,7 +462,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             prepared = newSlide(pick, last.image, last.frost, last.lightCaption, last.lightClock);
             return;
         }
-        File file = recs.readyImage(pick);
+        File file = photoFile(pick);
         if (file == null) {
             failed.add(Recs.key(pick));   // the image is gone from disk: try the next one
             prepareNext();
@@ -426,7 +605,19 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             if (fallback) drawFallback(canvas, up, current == null ? 1 : 1 - first);
             else canvas.drawRect(0, 0, w, h, black);
         }
-        if (current == null) return;
+        if (current == null) {
+            // No photos yet: with music, its background, the corner and the glass clock over it
+            drawMusicBackground(canvas, up);
+            if (musicAlpha > 0.004f) {
+                if (chromeDirty) recordChrome();
+                chrome.setAlpha(musicAlpha);
+                chrome.draw(canvas);
+                drawGlass(canvas, musicAlpha, 0);
+                boundMusic = true;
+            }
+            drawMusic(canvas, up);
+            return;
+        }
         if (fallback && first >= 1) fallback = false;
 
         place(current, up, placeA);
@@ -437,11 +628,116 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             drawPhoto(canvas, incoming, placeB, e);
         }
 
+        drawMusicBackground(canvas, up);
         if (chromeDirty) recordChrome();
         chrome.setAlpha(first);
         chrome.draw(canvas);
         drawGlass(canvas, first, e);
-        drawCaptions(canvas, up);
+        if (media.shown()) drawMusic(canvas, up);
+        else drawCaptions(canvas, up);
+    }
+
+    /**
+     * Music playing: bottom left, where the photo's caption goes, the cover (rounded, with a shadow), and to its right
+     * the song, the artist and the equalizer (following the sound, Beat; resting when paused).
+     */
+    private void drawMusic(Canvas c, long up) {
+        if (!media.shown()) return;
+        // A large cover; beside it, all within its height: the song and the artist, the equalizer, then the progress
+        float side = 380 * k, left = MARGIN * k, bottom = (META_BASE + 10) * k, top = bottom - side;
+        float tx = left + side + 48 * k;
+        // The cover: the last song's stays until the new one has downloaded (MediaNow), then the new one cross-fades
+        // over it as soon as it's here (blanking it between songs and waiting for the "ready" check made the change
+        // late and jumpy; that check only decides when the screensaver may start)
+        Bitmap art = media.art;
+        if (art != coverFor) {
+            coverPrev = coverFor;
+            prevShader = coverShader;
+            coverFor = art;
+            coverShader = art == null ? null : new BitmapShader(art, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+            coverAt = up;
+        }
+        float in = fadeIn(up - coverAt, COVER_FADE_MS);
+        coverRect.set(left, top, left + side, bottom);
+        if (coverFor != null || coverPrev != null) {
+            coverShade.setAlpha(0x80);
+            c.drawRoundRect(coverRect.left, coverRect.top + 14 * k, coverRect.right, coverRect.bottom + 14 * k, 20 * k, 20 * k, coverShade);
+        }
+        trackPaint.setColor(0x26FFFFFF);
+        c.drawRoundRect(coverRect, 20 * k, 20 * k, trackPaint);     // the frame, under the covers
+        if (coverPrev != null && in < 1) drawCover(c, coverPrev, prevShader, 1, side, left, top);
+        else coverPrev = null;
+        if (coverFor != null) drawCover(c, coverFor, coverShader, in, side, left, top);
+        // The texts are shortened once per song, not on every frame
+        float maxW = 1100 * k;
+        if (!media.title.equals(songFor)) {
+            songFor = media.title;
+            songText = TextUtils.ellipsize(songFor, new TextPaint(songPaint), maxW, TextUtils.TruncateAt.END).toString();
+        }
+        String artist = media.artist == null ? "" : media.artist;
+        if (!artist.equals(artistFor)) {
+            artistFor = artist;
+            artistText = TextUtils.ellipsize(artist, new TextPaint(metaPaint), maxW, TextUtils.TruncateAt.END).toString();
+        }
+        c.drawText(songText, tx, top + 66 * k, songPaint);
+        c.drawText(artistText, tx, top + 112 * k, metaPaint);
+        boolean live = beat.live();
+        double t = up / 1000.0;
+        float dt = barsAt == 0 ? 0 : Math.min(0.1f, (up - barsAt) / 1000f);
+        barsAt = up;
+        float barW = 12 * k, gap = 10 * k, barsBottom = top + 270 * k, tallest = 100 * k;
+        float rowW = WIDE_BARS * (barW + gap) - gap;    // the equalizer's width: the progress track takes the same
+        for (int i = 0; i < WIDE_BARS; i++) {
+            // As on the home screen: the sound per band, or their own dance; paused, they sink to rest
+            float level = live ? beat.level(i)
+                    : (float) Math.abs(Math.sin(t * HomeView.EQ_SPEED[i % 4] * (0.8f + 0.07f * (i % 5)) + i * 1.3f));
+            float target = media.playing ? 0.16f + 0.84f * level : 0.16f;
+            if (dt == 0) bars[i] = target;
+            else bars[i] += (target - bars[i]) * (1 - (float) Math.exp(-dt * (target > bars[i] ? 22 : 7)));
+            float bar = tallest * bars[i];
+            float x = tx + i * (barW + gap);
+            barRect.set(x, barsBottom - bar, x + barW, barsBottom);
+            c.drawRoundRect(barRect, barW / 2, barW / 2, barPaint);
+        }
+        // Under the bars, the song's progress: a track as wide as them, with the elapsed time and the length below it
+        if (media.duration <= 0) return;
+        long pos = media.position(), dur = media.duration;
+        if (pos / 1000 != elapsedFor) {
+            elapsedFor = pos / 1000;
+            elapsedText = minutes(pos);
+        }
+        if (dur / 1000 != durationFor) {
+            durationFor = dur / 1000;
+            durationText = minutes(dur);
+        }
+        float mid = bottom - 64 * k, thick = 6 * k, done = rowW * Ui.clamp(pos / (float) dur);
+        trackPaint.setColor(0x4DFFFFFF);
+        barRect.set(tx, mid - thick / 2, tx + rowW, mid + thick / 2);
+        c.drawRoundRect(barRect, thick / 2, thick / 2, trackPaint);
+        trackPaint.setColor(0xEBFFFFFF);
+        barRect.set(tx, mid - thick / 2, tx + done, mid + thick / 2);
+        c.drawRoundRect(barRect, thick / 2, thick / 2, trackPaint);
+        c.drawCircle(tx + done, mid, 9 * k, trackPaint);
+        float base = bottom - 14 * k;
+        c.drawText(elapsedText, tx, base, timePaint);
+        c.drawText(durationText, tx + rowW - timePaint.measureText(durationText), base, timePaint);
+    }
+
+    /** A cover, `side` square at (left, top), rounded, at `alpha`. */
+    private void drawCover(Canvas c, Bitmap art, BitmapShader shader, float alpha, float side, float left, float top) {
+        coverMatrix.setScale(side / art.getWidth(), side / art.getHeight());
+        coverMatrix.postTranslate(left, top);
+        shader.setLocalMatrix(coverMatrix);
+        coverPaint.setShader(shader);
+        coverPaint.setAlpha(Math.round(255 * alpha));
+        c.drawRoundRect(coverRect, 20 * k, 20 * k, coverPaint);
+        coverPaint.setAlpha(255);
+    }
+
+    /** 83000 ms → "1:23". */
+    private static String minutes(long ms) {
+        long s = ms / 1000;
+        return (s / 60) + ":" + (s % 60 < 10 ? "0" : "") + (s % 60);
     }
 
     private static float fadeIn(long elapsed, long duration) {
@@ -557,14 +853,37 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         Glass g = glass;
         if (g == null || glassShader == null || alpha <= 0.004f) return;
         // The glass samples the frosted version (1/6 of the photo): same position, with the scale 6 times larger.
+        // While music plays it shows the artist's background (drawn to fill the screen) as that fades in.
         float f = Backdrop.PHOTO_FROST;
-        glassShader.setFloatUniform("placeA", placeA[0], placeA[1], placeA[2] * f);
-        if (incoming != null) glassShader.setFloatUniform("placeB", placeB[0], placeB[1], placeB[2] * f);
-        else glassShader.setFloatUniform("placeB", placeA[0], placeA[1], placeA[2] * f);
-        glassShader.setFloatUniform("mixB", incoming == null ? 0 : e);
+        boolean music = musicAlpha > 0.004f && musicFrostShader != null;
+        float musicScale = music ? (float) w / musicFrost.getWidth() : 0;
+        if (current == null) {
+            if (!music) return;
+            glassShader.setInputShader("imageA", musicFrostShader);
+            glassShader.setInputShader("imageB", musicFrostShader);
+            glassShader.setFloatUniform("placeA", 0, 0, musicScale);
+            glassShader.setFloatUniform("placeB", 0, 0, musicScale);
+            glassShader.setFloatUniform("mixB", 0);
+        } else if (music) {
+            glassShader.setInputShader("imageA", current.shader);
+            glassShader.setInputShader("imageB", musicFrostShader);
+            glassShader.setFloatUniform("placeA", placeA[0], placeA[1], placeA[2] * f);
+            glassShader.setFloatUniform("placeB", 0, 0, musicScale);
+            glassShader.setFloatUniform("mixB", musicAlpha);
+            boundMusic = true;
+        } else {
+            if (boundMusic) {
+                bindPhotos();   // back to the photos
+                boundMusic = false;
+            }
+            glassShader.setFloatUniform("placeA", placeA[0], placeA[1], placeA[2] * f);
+            if (incoming != null) glassShader.setFloatUniform("placeB", placeB[0], placeB[1], placeB[2] * f);
+            else glassShader.setFloatUniform("placeB", placeA[0], placeA[1], placeA[2] * f);
+            glassShader.setFloatUniform("mixB", incoming == null ? 0 : e);
+        }
         glassShader.setFloatUniform("origin", g.x, g.y);
         glassShader.setFloatUniform("ink", g.inkTop, g.inkHeight);
-        glassShader.setFloatUniform("refraction", 14 * k);
+        glassShader.setFloatUniform("refraction", 14 * k * (0.5f + 2 * Prefs.glassAmount()));     // Settings > Liquid Glass
         glassShader.setFloatUniform("specular", 1);
         glassShader.setFloatUniform("alpha", alpha);
         c.drawRect(g.x, g.y, g.x + g.cover.getWidth(), g.y + g.cover.getHeight(), glassPaint);
@@ -680,7 +999,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
                     .setIncludePad(false).build();
             float originY = titleBase - t.getLineBaseline(t.getLineCount() - 1);
             float capTop = originY + t.getLineBaseline(0) - Ui.cap(titlePaint);
-            c.drawText(Recs.periodLabel(), x, capTop - 30 * k, labelPaint);
+            c.drawText(Scenery.isScenery(s.pick) ? Scenery.label() : Recs.periodLabel(), x, capTop - 30 * k, labelPaint);
             c.save();
             c.translate(x - Ui.leftBearing(titlePaint, title), originY);
             t.draw(c);

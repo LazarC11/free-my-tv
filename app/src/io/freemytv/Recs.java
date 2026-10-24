@@ -42,6 +42,7 @@ import java.util.concurrent.Executors;
 final class Recs {
     static final class Pick {
         int id;
+        int votes;              // TMDB votes when listed: how well known it is (not saved)
         String kind;            // "movie" or "tv"
         String title, backdrop, meta = "", app, pkg;
         boolean detailed;
@@ -53,7 +54,7 @@ final class Recs {
     private static final String IMAGES = "https://image.tmdb.org/t/p/original";
     private static final long LIST_EVERY = 6 * 3600_000L;
     /** Bump when what is saved for each title changes (the saved list is discarded and fetched again). */
-    private static final int CACHE_VERSION = 3;
+    private static final int CACHE_VERSION = 6;     // 6: trending deeper, best known first, well-known after, up to 40
     private static final int MANHA = 0, TARDE = 1, NOITE = 2;
     static final String[] PERIOD_LABEL = {"PARA ESTA MANHÃ", "PARA ESTA TARDE", "PARA ESTA NOITE"};
     static final String[] PERIOD_LABEL_RU = {"ЭТИМ УТРОМ", "СЕГОДНЯ ДНЁМ", "СЕГОДНЯ ВЕЧЕРОМ"};
@@ -180,16 +181,22 @@ final class Recs {
                     && (!p.detailed || (p.pkg != null && have.computeIfAbsent(p.pkg, this::installed)))) list.add(p);   // app missing: skip
         }
         if (list.isEmpty()) return list;
-        long hour = System.currentTimeMillis() / 3600_000L;
-        // Three per hour, never two from the same franchise ("Law & Order" and "Law & Order: Special…").
+        // The top of the list in its order (trending and best known first; it used to rotate three an hour through the
+        // whole list, so most hours showed titles from far down it), never two from the same franchise ("Law & Order"
+        // and "Law & Order: Special…").
         List<Pick> out = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
-        for (int i = 0; i < list.size() && out.size() < 3; i++) {
-            Pick p = list.get((int) ((hour * 3 + i) % list.size()));
+        for (int i = 0; i < list.size() && out.size() < MAX_CARDS; i++) {
+            Pick p = list.get(i);
             if (seen.add(franchise(p.title))) out.add(p);
         }
         return out;
     }
+
+    /** Cards per tab (Movies, Shows). */
+    static final int MAX_CARDS = 10;
+    /** Cards whose pictures are made ahead (the first ones of each tab); the others when they scroll into view. */
+    private static final int PRELOAD = 4;
 
     /** "Law & Order: Special Victims Unit" → "law & order" (what comes before ":" or " - "). */
     private static String franchise(String title) {
@@ -349,12 +356,13 @@ final class Recs {
         });
     }
 
-    /** This hour's picks for the three tabs (Explore, Movies, Shows), without repeats. */
+    /** The picks whose pictures are made ahead: the first few of Movies and Shows, without repeats. */
     List<Pick> wanted() {
         List<Pick> out = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
-        for (String kind : new String[] {null, "movie", "tv"}) {
-            for (Pick p : now(kind)) if (seen.add(key(p))) out.add(p);
+        for (String kind : new String[] {"movie", "tv"}) {
+            List<Pick> tab = now(kind);
+            for (int i = 0; i < Math.min(PRELOAD, tab.size()); i++) if (seen.add(key(tab.get(i)))) out.add(tab.get(i));
         }
         return out;
     }
@@ -384,41 +392,62 @@ final class Recs {
         for (int id : services.keySet()) ids.append(ids.length() == 0 ? "" : "|").append(id);
         String common = "&language=" + lang() + "&watch_region=" + REGION + "&with_watch_monetization_types=flatrate&include_adult=false"
                 + "&sort_by=popularity.desc&with_watch_providers=" + URLEncoder.encode(ids.toString(), "UTF-8");
-        // 1. Trending this week (TMDB goes by what people are watching and searching for right now), only what is
-        //    on one of the TV's services: the details say where (and are then ready).
+        // 1. Trending this week worldwide (TMDB goes by what people are watching and searching for right now), only
+        //    what streams on one of the TV's services. Most trending movies are still in cinemas, so the top 60 are
+        //    looked at (a light request each), and only those that stream get their details (then ready).
         List<Pick> hotMovies = new ArrayList<>(), hotShows = new ArrayList<>();
         for (String kind : new String[] {"movie", "tv"}) {
-            JSONArray hot = get("/trending/" + kind + "/week?language=" + lang()).getJSONArray("results");
             List<Pick> candidates = new ArrayList<>();
-            for (int i = 0; i < hot.length() && i < 20; i++) add(candidates, hot.getJSONObject(i), kind);
+            for (int page = 1; page <= TRENDING_PAGES; page++) {
+                JSONArray hot = get("/trending/" + kind + "/week?language=" + lang() + "&page=" + page).getJSONArray("results");
+                for (int i = 0; i < hot.length(); i++) add(candidates, hot.getJSONObject(i), kind);
+            }
+            List<Pick> hits = kind.equals("movie") ? hotMovies : hotShows;
             for (Pick pick : candidates) {
+                if (hits.size() >= MAX_TRENDING) break;
                 try {
+                    if (!streams(pick, services)) continue;
                     fetchDetails(pick);
                 } catch (Exception e) {
                     continue;
                 }
-                if (pick.pkg != null) (kind.equals("movie") ? hotMovies : hotShows).add(pick);
+                if (pick.pkg != null) hits.add(pick);
             }
+            // Of what trends and streams, the best known first (a big film before a small new release)
+            hits.sort((a, b) -> Integer.compare(b.votes, a.votes));
         }
-        // 2. Recent releases on the TV's services: movies from the past year and shows with a new episode in the
-        //    past 3 months.
-        JSONArray movies = get("/discover/movie?vote_count.gte=30&primary_release_date.gte=" + day(-365)
+        // 2. Then titles popular on the TV's services right now that people know (hundreds of votes, not a few dozen:
+        //    those were titles nobody had heard of): movies from the past 2 years, shows aired in the past 6 months.
+        JSONArray movies = get("/discover/movie?vote_count.gte=300&primary_release_date.gte=" + day(-730)
                 + "&primary_release_date.lte=" + day(0) + common).getJSONArray("results");
-        JSONArray shows = get("/discover/tv?vote_count.gte=20&air_date.gte=" + day(-90) + "&air_date.lte=" + day(0)
+        JSONArray shows = get("/discover/tv?vote_count.gte=150&air_date.gte=" + day(-180) + "&air_date.lte=" + day(0)
                 + common).getJSONArray("results");
         List<Pick> newMovies = new ArrayList<>(), newShows = new ArrayList<>();
         for (int i = 0; i < movies.length(); i++) add(newMovies, movies.getJSONObject(i), "movie");
         for (int i = 0; i < shows.length(); i++) add(newShows, shows.getJSONObject(i), "tv");
-        // Trending first, then the new releases; movies and shows alternating, without repeats, up to 24.
+        // Trending first, then the well-known ones; movies and shows alternating, without repeats, up to 40 (ten a
+        // tab, with room for the ones a missing app or a repeated franchise leaves out).
         List<Pick> list = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
-        alternate(list, seen, hotMovies, hotShows, 24);
-        alternate(list, seen, newMovies, newShows, 24);
+        alternate(list, seen, hotMovies, hotShows, 40);
+        alternate(list, seen, newMovies, newShows, 40);
         if (list.isEmpty()) throw new IOException("TMDB returned no recommendations");
         picks = list;
         period = p;
         listAt = System.currentTimeMillis();
         listLanguage = Ui.language;
+    }
+
+    private static final int TRENDING_PAGES = 3, MAX_TRENDING = 12;
+
+    /** The title streams (flatrate) in the region on one of the TV's services (`services`: TMDB provider id → service). */
+    private boolean streams(Pick p, Map<Integer, String[]> services) throws Exception {
+        JSONObject region = get("/" + p.kind + "/" + p.id + "/watch/providers").getJSONObject("results").optJSONObject(REGION);
+        JSONArray flat = region == null ? null : region.optJSONArray("flatrate");
+        for (int i = 0; flat != null && i < flat.length(); i++) {
+            if (services.containsKey(flat.getJSONObject(i).optInt("provider_id"))) return true;
+        }
+        return false;
     }
 
     /** Language of titles and genres; the services come from the region. */
@@ -448,6 +477,7 @@ final class Recs {
         if (backdrop.isEmpty() || "null".equals(backdrop)) return;
         Pick p = new Pick();
         p.id = o.optInt("id");
+        p.votes = o.optInt("vote_count");
         p.kind = kind;
         p.title = o.optString(kind.equals("movie") ? "title" : "name");
         p.backdrop = backdrop;
@@ -575,7 +605,41 @@ final class Recs {
         return stamp;
     }
 
-    private JSONObject get(String path) throws IOException, org.json.JSONException {
+    /**
+     * A wide TMDB backdrop for a title found by its name, for Explore's cards from apps that don't send a sharp picture
+     * (NetflixHistory; Stremio, through NowPlaying). `kind`: "movie", "tv", or null when it isn't known. Null if TMDB
+     * has none (or without a key). Not on the UI thread.
+     */
+    Bitmap backdropFor(String title, String kind) throws IOException {
+        if (!hasKey(context) || title == null || title.isEmpty()) return null;
+        JSONObject found;
+        try {
+            found = get("/search/" + (kind == null ? "multi" : kind) + "?query=" + URLEncoder.encode(title, "UTF-8"));
+        } catch (org.json.JSONException e) {
+            return null;
+        }
+        JSONArray results = found.optJSONArray("results");
+        String path = null;
+        for (int i = 0; results != null && i < results.length() && path == null; i++) {
+            JSONObject o = results.optJSONObject(i);
+            if (o == null || "person".equals(o.optString("media_type"))) continue;
+            String p = o.optString("backdrop_path", "");
+            if (!p.isEmpty() && !p.equals("null")) path = p;
+        }
+        if (path == null) return null;
+        // 1280 px wide: sharp on the wide card (about 1100 px)
+        HttpURLConnection h = (HttpURLConnection) new URL("https://image.tmdb.org/t/p/w1280" + path).openConnection();
+        h.setConnectTimeout(10_000);
+        h.setReadTimeout(20_000);
+        try (InputStream in = h.getInputStream()) {
+            return BitmapFactory.decodeStream(in);
+        } finally {
+            h.disconnect();
+        }
+    }
+
+    /** A TMDB API call (also backdropFor's search). */
+    JSONObject get(String path) throws IOException, org.json.JSONException {
         String key = readKey();
         if (key == null) throw new IOException("no TMDB key");
         boolean bearer = key.startsWith("eyJ");   // read access token (v4) or API key (v3)
@@ -648,7 +712,7 @@ final class Recs {
             if (forLight != light) return;   // the design changed midway: this one is stale
             synchronized (images) {
                 images.put(p.backdrop, backdrop);
-                while (images.size() > (forLight ? 10 : 4)) images.remove(images.keySet().iterator().next());
+                while (images.size() > (forLight ? 14 : 4)) images.remove(images.keySet().iterator().next());
             }
             notifyListeners();
         } catch (IOException | RuntimeException | OutOfMemoryError e) {

@@ -38,7 +38,11 @@ final class Ui {
     private static final Rect BOUNDS = new Rect();
     private static final RectF OVAL = new RectF();
 
+    /** The TV's own 12/24-hour setting (English used to mean 12-hour even with the TV on 24). */
+    static volatile boolean h24 = true;
+
     static synchronized void init(Context c) {
+        h24 = android.text.format.DateFormat.is24HourFormat(c);
         if (loaded) return;
         loaded = true;
         AssetManager a = c.getAssets();
@@ -164,13 +168,13 @@ final class Ui {
 
     /** "21:47" (in English, "9:47", like the iPhone in the US). */
     static String clock(long now) {
-        return en ? new SimpleDateFormat("h:mm", Locale.US).format(new Date(now))
+        return en ? new SimpleDateFormat(h24 ? "HH:mm" : "h:mm", Locale.US).format(new Date(now))
                 : new SimpleDateFormat("HH:mm", locale()).format(new Date(now));
     }
 
     /** "5:21" (sunrise and sunset; in English, "5:21 AM"). */
     static String time(long at) {
-        return once("time", at, () -> en ? new SimpleDateFormat("h:mm a", Locale.US).format(new Date(at))
+        return once("time", at, () -> en ? new SimpleDateFormat(h24 ? "H:mm" : "h:mm a", Locale.US).format(new Date(at))
                 : new SimpleDateFormat("H:mm", locale()).format(new Date(at)));
     }
 

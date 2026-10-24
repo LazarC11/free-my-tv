@@ -8,6 +8,10 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- After the TV boots (and after a TV update), checks that Free My TV mode is still as you left it. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- The player's equalizer moves to the music (Beat): Android's Visualizer on the TV's sound output needs these.
+         It never opens the microphone. Granted through ADB in Free My TV mode, taken back by Original. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <!-- Android 11+: without this list the app can't "see" the other apps (getLeanbackLaunchIntentForPackage
          returns null). The shelf and streaming apps, the live TV apps and, through the <intent>, every TV app
@@ -48,6 +52,10 @@
         android:banner="@drawable/banner"
         android:allowBackup="false"
         android:usesCleartextTraffic="false">
+
+        <!-- TCL's picture service (TvPqManager): told when the drawer's live input preview shows, as TCL's own home
+             screen does (HomeView.tclHomeWidget). Only on TCL TVs; elsewhere it isn't there and nothing changes. -->
+        <uses-library android:name="com.tcl.tv.display" android:required="false" />
 
         <!-- The app's icon opens the settings (switch between Free My TV and the original home screen). -->
         <activity
@@ -122,6 +130,18 @@
             android:name=".ModeJob"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <!-- "Jump back in": what the apps report as playing (NowPlaying). A notification listener only because Android
+             asks for one to read the media sessions; it reads no notifications. On only in Free My TV mode. -->
+        <service
+            android:name=".NowPlaying"
+            android:exported="true"
+            android:label="Free My TV"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
 
         <!-- The remote's app buttons from inside any app (Settings > Remote Buttons). Its own process: the system waits for it on
              every key, so the home screen must never be able to slow it down. -->

@@ -59,6 +59,9 @@ final class Config {
     static final String TEMPERATURE = "$(prop temperature auto)";
     static final boolean DISABLE_ASSISTANT = $ASSIST;
     static final boolean SHOW_CRYPTO = $CRYPTO;
+    static final String NETFLIX_ID = "$(prop netflix_id '')";
+    static final String SECURE_NETFLIX_ID = "$(prop secure_netflix_id '')";
+    static final String NETFLIX_PROFILES = "$(prop netflix_profiles '')";
 }
 EOF
 

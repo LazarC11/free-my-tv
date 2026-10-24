@@ -20,7 +20,6 @@ final class Spanish {
             case "Sunset ": return "Atardecer ";
             case "Crypto": return "Cripto";
             case "24h change": return "variación en 24 h";
-            case "For You": return "Para ti";
             case "Couldn't open ": return "No se pudo abrir ";
             case " of ": return " de ";
             case "← → to move · OK to drop · Back to cancel": return "← → para mover · OK para soltar · Atrás para cancelar";
@@ -84,6 +83,14 @@ final class Spanish {
             case "Language": return "Idioma";
             case "Temperature": return "Temperatura";
             case "Theme": return "Tema";
+            case "Screensaver photos": return "Fotos del protector de pantalla";
+            case "Screensaver clock": return "Reloj del protector de pantalla";
+            case "Movies and shows": return "Películas y series";
+            case "Nature": return "Naturaleza";
+            case "Architecture": return "Arquitectura";
+            case "Small": return "Pequeño";
+            case "Medium": return "Mediano";
+            case "Large": return "Grande";
             case "Automatic": return "Automático";
             case "Light": return "Claro";
             case "Dark": return "Oscuro";
