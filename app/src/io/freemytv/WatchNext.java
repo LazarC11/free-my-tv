@@ -36,6 +36,7 @@ final class WatchNext {
         String title = "", subtitle = "", pkg, image;
         Intent intent;
         float progress = -1;    // 0 to 1, or -1
+        long engaged, left = -1;  // when it was last watched (epoch ms); time left (ms), or -1
         Bitmap card;            // the image at the card's size (loaded later)
     }
 
@@ -85,7 +86,11 @@ final class WatchNext {
                     }
                 }
                 long position = cur.isNull(8) ? 0 : cur.getLong(8), duration = cur.isNull(9) ? 0 : cur.getLong(9);
-                if (position > 0 && duration > 0) e.progress = Math.min(1f, position / (float) duration);
+                if (position > 0 && duration > 0) {
+                    e.progress = Math.min(1f, position / (float) duration);
+                    e.left = Math.max(0, duration - position);
+                }
+                e.engaged = cur.isNull(10) ? 0 : cur.getLong(10);
                 if (!seen.add(e.pkg + "|" + e.title + "|" + e.subtitle)) continue;
                 out.add(e);
             }

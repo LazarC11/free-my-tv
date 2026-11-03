@@ -47,7 +47,7 @@ final class Ui {
     static volatile String language = "en";
     /** Bumped when the language changes: text cached by the screens is made again. */
     static volatile int generation;
-    static Typeface thin, light, displayMedium, displaySemibold, regular, medium, semibold;
+    static Typeface thin, light, displayMedium, displaySemibold, displayHeavy, regular, medium, semibold;
     private static boolean loaded;
     private static final Rect BOUNDS = new Rect();
     private static final RectF OVAL = new RectF();
@@ -60,6 +60,7 @@ final class Ui {
         light = font(a, 32, 300);
         displayMedium = font(a, 32, 500);
         displaySemibold = font(a, 32, 600);
+        displayHeavy = font(a, 32, 800);
         regular = font(a, 14, 400);
         medium = font(a, 14, 500);
         semibold = font(a, 14, 600);

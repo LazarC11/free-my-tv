@@ -30,6 +30,7 @@ final class NowPlaying {
         Bitmap art;
         long position = -1, duration = -1, positionAt;   // ms; positionAt: elapsedRealtime of the position
         float speed = 1;
+        boolean playing = true;
         PendingIntent open;
 
         /** The position now, moving with the playback (-1 when unknown). */
@@ -115,6 +116,10 @@ final class NowPlaying {
                     break;
                 }
             }
+            // Nothing playing: the paused one we follow stays.
+            if (best == null && controller != null && paused(controller)) {
+                for (MediaController m : list) if (m.getSessionToken().equals(controller.getSessionToken())) best = controller;
+            }
         }
         follow(best);
     }
@@ -140,10 +145,31 @@ final class NowPlaying {
         refresh();
     }
 
-    /** Reads the followed session again; a session that stopped playing hides the card (another may be playing). */
+    /** A paused session stays (the home screen's pause button must not make the music go away); a stopped one goes. */
+    private static boolean paused(MediaController m) {
+        PlaybackState s = m.getPlaybackState();
+        return s != null && s.getState() == PlaybackState.STATE_PAUSED;
+    }
+
+    /** The remote's play / pause, next and previous, sent to the app that plays. */
+    void playPause() {
+        if (controller == null) return;
+        if (playing(controller)) controller.getTransportControls().pause();
+        else controller.getTransportControls().play();
+    }
+
+    void next() {
+        if (controller != null) controller.getTransportControls().skipToNext();
+    }
+
+    void previous() {
+        if (controller != null) controller.getTransportControls().skipToPrevious();
+    }
+
+    /** Reads the followed session again; a session that stopped hides the music (another may be playing). */
     private void refresh() {
         Track next = null;
-        if (controller != null && !playing(controller)) {
+        if (controller != null && !playing(controller) && !paused(controller)) {
             controller.unregisterCallback(callback);
             controller = null;
             handler.post(() -> pick(null));
@@ -151,9 +177,12 @@ final class NowPlaying {
         if (controller != null) next = read(controller);
         if (same(track, next)) {
             if (track != null && next != null) {
+                boolean changed = track.playing != next.playing;
                 track.position = next.position;
                 track.positionAt = next.positionAt;
                 track.speed = next.speed;
+                track.playing = next.playing;
+                if (changed) listener.onNowPlaying();
             }
             return;
         }
@@ -181,6 +210,7 @@ final class NowPlaying {
             t.positionAt = s.getLastPositionUpdateTime() > 0 ? s.getLastPositionUpdateTime() : SystemClock.elapsedRealtime();
             t.speed = s.getState() == PlaybackState.STATE_PLAYING ? (s.getPlaybackSpeed() == 0 ? 1 : s.getPlaybackSpeed()) : 0;
         }
+        t.playing = playing(m);
         t.open = m.getSessionActivity();
         try {
             PackageManager pm = context.getPackageManager();

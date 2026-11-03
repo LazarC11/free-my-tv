@@ -58,12 +58,15 @@ final class HomeApps {
     static final int APP = 0, LIVE_TV = 1, INPUT = 2, ALL_APPS = 3, SETTINGS = 4, ANDROID_SETTINGS = 5, DEVICE = 6;
     /** The "HDMI Inputs" button: opens the bottom drawer on the inputs (the home screen handles it). */
     static final int INPUTS = 7;
+    /** The side bar's Home item (scrolls the home screen back to the top). */
+    static final int HOME = 8;
     /** Image size of each card (16:9; on screen it shows up to ~330 px wide). */
     static final int TILE_W = 384, TILE_H = 216;
 
     static final class Item {
         int kind;
         String key, label, pkg, inputId, number;
+        String sub;         // a second line in the side bar ("HDMI 1", "No signal")
         String uri;         // opens this address in the app instead of the app's home (a title's page)
         Intent intent;      // DEVICE: the TV maker's own screen it opens
         String symbol;      // icon for the shortcuts and special cards
@@ -230,41 +233,6 @@ final class HomeApps {
 
     // MARK: - Top buttons (the round ones at the top right)
 
-    static final String TOP_LIVE = "live", TOP_INPUTS = "inputs", TOP_SETTINGS = "settings";
-    static final List<String> TOP_DEFAULT = Collections.unmodifiableList(java.util.Arrays.asList(TOP_LIVE, TOP_INPUTS, TOP_SETTINGS));
-    static final int MAX_TOP = TOP_DEFAULT.size();
-
-    /** The keys of the top buttons, in order (Settings > Top Buttons; by default Live TV, HDMI Inputs, Settings). */
-    static List<String> topButtonKeys() {
-        List<String> saved = Prefs.topButtons();
-        if (saved == null) return TOP_DEFAULT;
-        List<String> keys = new ArrayList<>();
-        for (String key : saved) if (TOP_DEFAULT.contains(key) && !keys.contains(key)) keys.add(key);
-        return keys;
-    }
-
-    /** The top buttons, ready to draw (0 to 3 of them). */
-    static List<Item> topButtons() {
-        List<Item> items = new ArrayList<>();
-        for (String key : topButtonKeys()) items.add(topButton(key));
-        return items;
-    }
-
-    private static Item topButton(String key) {
-        switch (key) {
-            case TOP_LIVE: return action(LIVE_TV, TOP_LIVE, Ui.tr("light|Live TV"), "live_tv");
-            case TOP_INPUTS: return action(INPUTS, TOP_INPUTS, Ui.tr("HDMI Inputs"), "hdmi");
-            default: return action(SETTINGS, TOP_SETTINGS, Ui.tr("light|Settings"), "settings");
-        }
-    }
-
-    /** What can go in the top buttons, as {key, name}. */
-    static List<String[]> topCandidates() {
-        List<String[]> out = new ArrayList<>();
-        for (String key : TOP_DEFAULT) out.add(new String[] {key, topButton(key).label});
-        return out;
-    }
-
     /** Live TV, the HDMI inputs with a device sending a signal, and All Apps. */
     static List<Item> shortcuts(Context c) {
         List<Item> items = new ArrayList<>();
@@ -403,6 +371,64 @@ final class HomeApps {
         Collections.sort(out, (a, b) -> a.number.compareTo(b.number));
         // Allwinner's player opens only HDMI 1 (HY300: one port, though the board lists three)
         if (allwinnerInputs(c)) out.removeIf(it -> !"1".equals(it.number));
+        return out;
+    }
+
+    // MARK: - The side bar
+
+    /**
+     * Everything the side bar can hold, as items with a stable key: Home, Live TV, every HDMI input (by its device's
+     * name, the port below), the maker's own screens (HY300: Keystone, Screen Mirroring), Wi-Fi, Sound, Settings.
+     */
+    static List<Item> railCandidates(Context c) {
+        List<Item> out = new ArrayList<>();
+        out.add(shortcut(HOME, "home", Ui.tr("Home"), "home"));
+        if (liveTv(c) != null) out.add(shortcut(LIVE_TV, "live", Ui.tr("Live TV"), "tv"));
+        for (Item it : inputs(c, true)) {
+            String port = "HDMI " + it.number;
+            it.key = "input:" + it.inputId;
+            it.sub = !it.label.equals(port) ? port : it.connected ? "" : Ui.tr("No signal");
+            out.add(it);
+        }
+        for (Item it : drawerShortcuts(c)) if (it.kind == DEVICE) out.add(it);
+        Item wifi = shortcut(DEVICE, "wifi", Ui.tr("Wi-Fi"), "wifi");
+        wifi.intent = wifiSettings();
+        out.add(wifi);
+        Item sound = shortcut(DEVICE, "sound", Ui.tr("Sound"), "speaker");
+        sound.intent = new Intent(Settings.ACTION_SOUND_SETTINGS);
+        if (c.getPackageManager().resolveActivity(sound.intent, 0) != null) out.add(sound);
+        out.add(shortcut(SETTINGS, "settings", Ui.tr("Settings"), "settings"));
+        return out;
+    }
+
+    /** Off unless picked in Settings › Side bar: Wi-Fi and Sound. Everything else shows by default. */
+    private static final Set<String> RAIL_EXTRAS = new HashSet<>(java.util.Arrays.asList("wifi", "sound"));
+
+    /** The side bar now: the saved list (Settings › Side bar) or the default; Home first and Settings last, always. */
+    static List<Item> rail(Context c) {
+        List<Item> all = railCandidates(c), out = new ArrayList<>();
+        List<String> saved = Prefs.rail();
+        Item home = null, settings = null;
+        for (Item it : all) {
+            if (it.key.equals("home")) home = it;
+            if (it.key.equals("settings")) settings = it;
+        }
+        out.add(home);
+        if (saved == null) {
+            for (Item it : all) if (it != home && it != settings && !RAIL_EXTRAS.contains(it.key)) out.add(it);
+        } else {
+            for (String key : saved) {
+                for (Item it : all) if (it != home && it != settings && it.key.equals(key)) out.add(it);
+            }
+        }
+        out.add(settings);
+        return out;
+    }
+
+    /** The keys in the side bar now (for its editor). */
+    static List<String> railKeys(Context c) {
+        List<String> out = new ArrayList<>();
+        for (Item it : rail(c)) out.add(it.key);
         return out;
     }
 

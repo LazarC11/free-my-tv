@@ -130,6 +130,35 @@ final class Prefs {
         version++;
     }
 
+    // MARK: - Home screen: background, music, side bar, screensaver scenes
+
+    /** The home screen's background while nothing plays: "daily" (the photo of the day) or "mine" (My Photos). */
+    static String background() { return sp().getString("background", "daily"); }
+    static void setBackground(String v) { put("background", v); }
+
+    /** Behind the music: "artist" (the artist's photo) or "album" (the album cover, blurred). */
+    static String musicBackground() { return sp().getString("musicBackground", "artist"); }
+    static void setMusicBackground(String v) { put("musicBackground", v); }
+
+    /** The side bar's items in order (Rail keys), or null: the built-in list. */
+    static List<String> rail() { return list("rail"); }
+    static void setRail(List<String> keys) { put("rail", String.join("\n", keys)); }
+
+    /** The screensaver scenes the TV downloads and plays (Videos.SCENES keys), in order. */
+    static List<String> scenes() {
+        List<String> v = list("scenes");
+        return v != null ? v : Videos.DEFAULT_SCENES;
+    }
+    static void setScenes(List<String> keys) { put("scenes", String.join("\n", keys)); }
+
+    private static List<String> list(String key) {
+        String v = sp().getString(key, null);
+        if (v == null) return null;
+        List<String> out = new ArrayList<>();
+        for (String s : v.split("\n")) if (!s.trim().isEmpty()) out.add(s.trim());
+        return out;
+    }
+
     /** The home screen's soft click when moving and opening. */
     static boolean sounds() { return sp().getBoolean("sounds", true); }
     static void setSounds(boolean on) { put("sounds", on); }
@@ -167,24 +196,6 @@ final class Prefs {
     }
 
     // MARK: - Top buttons
-
-    /**
-     * The round buttons at the top right, in order: "live", "inputs" and/or "settings". null until the user edits
-     * them (then HomeApps.TOP_DEFAULT applies); empty when they took all three off.
-     */
-    static List<String> topButtons() {
-        String v = sp().getString("topButtons", null);
-        if (v == null) return null;
-        List<String> out = new ArrayList<>();
-        for (String p : v.split(",")) if (!p.isEmpty()) out.add(p);
-        return out;
-    }
-
-    static void setTopButtons(List<String> keys) {
-        StringBuilder sb = new StringBuilder();
-        for (String p : keys) sb.append(sb.length() == 0 ? "" : ",").append(p);
-        put("topButtons", sb.toString());
-    }
 
     // MARK: - Remote buttons
 

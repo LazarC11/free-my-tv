@@ -186,15 +186,24 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
   fetches the forecast again when the city changed).
   To check for newer APIs, compile against `platforms/android-26/android.jar`: only AGSL (`RuntimeShader`, guarded
   by a try/catch), `BitmapShader.setFilterMode` (guarded), `Recording.Node` and `Ui.Weighted` (the Android 9 font weight) should come up.
-- The home screen is drawn by hand on one Canvas (`HomeView`): no glass. The big clock is centered, the inputs sit
-  just above the shelf of square tiles along the bottom, and the background photo (your
-  photos, else the picks' images, else `wallpaper` colors) is decoded with its scrims baked in, so it is one texture;
-  the shelf's square tiles come from `HomeApps.squareTile` (the adaptive icon, else the logo on a dark card). The now
-  playing card reads media sessions (`NowPlaying`, allowed through the `MediaListener` notification listener) and
-  Continue watching reads Android TV's Watch Next list (`WatchNext`, `READ_EPG_DATA`); the switch grants both over ADB
-  (`HomeMode.homeExtras`) and Original takes them back. The settings screen still uses the glass (`Scene`, `Shaders`).
-  The screensaver (`DreamView`) plays real video clips (`Videos`: sent with `tools/videos.py`, or downloaded once from
-  `screensaver_videos` in config.properties) muted on a TextureView; without any, photos with a slow zoom.
+- The home screen is drawn by hand on one Canvas (`HomeView`), in clear liquid glass (`Glass`: no blur, the
+  background seen through, a thin rim and light inside the edge). A glass pill on the left (the side bar: the brand's
+  logo from `assets/brand/`, Home, Live TV, the inputs, the maker's screens, Settings; `HomeApps.rail`, edited in
+  Settings › Side Bar) opens into a panel with ←. The clock is glass digits at the top right (`Glass.clock`, made once
+  a minute in the background), with the weather to its left. The shelf is a centered glass dock of square tiles
+  (`HomeApps.squareTile`) along the bottom; the focused tile grows and a shine sweeps across it. The background is
+  Bing's photo of the day in 4K (`DailyPhoto`, "Another photo today" picks one of the last 8 days) or your photos,
+  decoded with its scrims baked in, so it is one texture. For 5 minutes after something was watched, Continue
+  watching takes the background (the newest Watch Next entry); after that it is a row below the shelf, then the
+  weather panel, then All apps. Music (`NowPlaying`, any app's media session, allowed through the `MediaListener`
+  notification listener) turns the playing app's tile into its cover, 3× larger, on the left, with the track, the
+  progress and the controls above the shelf, over the artist's photo (`ArtistArt`: TheAudioDB, else Deezer; or the
+  cover, Settings › Home Settings › Music background). Continue watching reads Android TV's Watch Next list
+  (`WatchNext`, `READ_EPG_DATA`); the switch grants both over ADB (`HomeMode.homeExtras`) and Original takes them
+  back. The settings screen uses the older glass (`Scene`, `Shaders`).
+  The screensaver (`DreamView`) plays real video clips (`Videos`: the scenes picked in Settings › Screensaver Scenes,
+  downloaded once on an unmetered network; clips sent with `tools/videos.py`; or `screensaver_videos` in
+  config.properties) muted on a TextureView; without any, photos with a slow zoom.
   Keep it at 60 fps: no allocations in `onDraw`, no work on the UI thread.
 - Some TVs draw their UI at 1280×720 on a 1080p panel (TCL's 1 GB models: `ro.surface_flinger.max_graphics_width`
   and `_height`, `ro.config.low_ram`). There every pixel and every MB counts: `Backdrop` builds its images at the UI's

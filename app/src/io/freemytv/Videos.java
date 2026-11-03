@@ -18,7 +18,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * The screensaver's video clips (a real fireplace, an aquarium...). Two sources:
+ * The screensaver's video clips (a real fireplace, an aquarium...). Three sources:
+ *  - the built-in scenes picked in Settings (SCENES: real footage, downloaded once);
  *  - the ones a computer put in the app's own folder on the TV (tools/videos.py: Android/data/io.freemytv/files/videos,
  *    no permission needed), played from there;
  *  - the links in config.properties (screensaver_videos), each downloaded once into the app's private folder, only on
@@ -35,9 +36,41 @@ final class Videos {
     private static volatile boolean busy;
     private static volatile long failedAt;
 
-    /** The links from config.properties: https only, separated by commas, spaces or new lines. */
+    /**
+     * The built-in scenes: real footage from Mixkit (free to use, no credit needed), as {key, name, link}. Settings ›
+     * Screensaver scenes picks which ones the TV downloads and plays, in that order.
+     */
+    static final String[][] SCENES = {
+        {"fireplace", "Fireplace", "https://assets.mixkit.co/videos/2707/2707-1080.mp4"},
+        {"reef", "Coral reef", "https://assets.mixkit.co/videos/45376/45376-720.mp4"},
+        {"aurora", "Northern lights", "https://assets.mixkit.co/videos/4034/4034-1080.mp4"},
+        {"ocean", "Ocean sunset", "https://assets.mixkit.co/videos/15209/15209-720.mp4"},
+        {"rain", "Rain on the window", "https://assets.mixkit.co/videos/2846/2846-1080.mp4"},
+        {"snow", "Snowy peaks", "https://assets.mixkit.co/videos/4396/4396-1080.mp4"},
+        {"city", "City at night", "https://assets.mixkit.co/videos/49878/49878-1080.mp4"},
+    };
+    static final List<String> DEFAULT_SCENES = Arrays.asList("fireplace", "reef", "aurora", "ocean");
+
+    /** A scene's name in the viewer's language. */
+    static String sceneName(String key) {
+        switch (key) {
+            case "fireplace": return Ui.tr("Fireplace");
+            case "reef": return Ui.tr("Coral reef");
+            case "aurora": return Ui.tr("Northern lights");
+            case "ocean": return Ui.tr("Ocean sunset");
+            case "rain": return Ui.tr("Rain on the window");
+            case "snow": return Ui.tr("Snowy peaks");
+            case "city": return Ui.tr("City at night");
+            default: return key;
+        }
+    }
+
+    /** The links to download: the scenes picked in Settings, then those from config.properties (https only). */
     static List<String> links() {
         List<String> out = new ArrayList<>();
+        for (String key : Prefs.scenes()) {
+            for (String[] scene : SCENES) if (scene[0].equals(key)) out.add(scene[2]);
+        }
         for (String s : Config.SCREENSAVER_VIDEOS.split("[,\\s]+")) {
             s = s.trim();
             if (s.startsWith("https://") && !out.contains(s)) out.add(s);
