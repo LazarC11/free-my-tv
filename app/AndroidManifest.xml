@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- After the TV boots (and after a TV update), checks that Free My TV mode is still as you left it. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Continue watching on the home screen: the apps' Watch Next list (granted over ADB in Free My TV mode). -->
+    <uses-permission android:name="com.android.providers.tv.permission.READ_EPG_DATA" />
 
     <!-- Android 11+: without this list the app can't "see" the other apps (getLeanbackLaunchIntentForPackage
          returns null). The shelf and streaming apps, the live TV apps and, through the <intent>, every TV app
@@ -169,6 +171,18 @@
             <meta-data
                 android:name="android.accessibilityservice"
                 android:resource="@xml/remote_key_service" />
+        </service>
+
+        <!-- Lets the home screen see which app is playing (its now playing card). Reads no notifications; allowed
+             over ADB in Free My TV mode only. -->
+        <service
+            android:name=".MediaListener"
+            android:exported="true"
+            android:label="Free My TV"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
         </service>
 
         <receiver

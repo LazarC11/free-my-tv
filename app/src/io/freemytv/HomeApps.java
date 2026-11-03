@@ -73,6 +73,9 @@ final class HomeApps {
         Bitmap logoDark;    // version for a light background (YouTube's white icon), if any
         float logoInk;      // fraction of the logo with ink (thin logos are drawn larger, with the same "weight")
         float logoScale = 1; // size tweak by eye (compact logos need more)
+        int brand;          // the brand's color (apps in SHELF), or 0
+        Bitmap square;      // the square tile on the home screen (squareTile), made in the background
+        BitmapShader squareShader;   // its shader, for the rounded corners (made with the tile, never while drawing)
         boolean connected = true;
 
         void setTile(Bitmap b) {
@@ -181,6 +184,7 @@ final class HomeApps {
                 if (it.logo != null) it.logoInk = ink(it.logo);
                 it.logoDark = ownLogoCached(c, d[0] + "-dark");
                 it.logoScale = Float.parseFloat(d[5]);
+                it.brand = 0xFF000000 | Integer.parseInt(d[3], 16);
             }
             items.add(it);
         }
@@ -427,6 +431,30 @@ final class HomeApps {
             for (int i = 1; i < group.length; i++) if (n.contains(group[i])) return group[0];
         }
         return "hdmi";
+    }
+
+    /**
+     * Every app for All Apps (the shelf's too), by name, then Free My TV's settings. Without tiles: the home screen
+     * makes the square ones. The live TV apps are left out (Live TV opens them) and so are the HIDDEN ones.
+     */
+    static List<Item> allApps(Context c) {
+        List<Item> items = new ArrayList<>();
+        Set<String> skip = new HashSet<>(HIDDEN);
+        skip.addAll(java.util.Arrays.asList(LIVE_TV_APPS));
+        skip.add(c.getPackageName());
+        for (String[] app : launchable(c)) {
+            if (!skip.add(app[0])) continue;
+            Item it = app(app[0], app[1]);
+            String[] d = known(app[0]);
+            if (d != null) {
+                it.label = d[1];
+                it.brand = 0xFF000000 | Integer.parseInt(d[3], 16);
+            }
+            items.add(it);
+        }
+        Collections.sort(items, (a, b) -> a.label.toLowerCase(Locale.ROOT).compareTo(b.label.toLowerCase(Locale.ROOT)));
+        items.add(shortcut(SETTINGS, "freemytv-settings", "Free My TV", "sparkles"));
+        return items;
     }
 
     /** Installed, enabled TV apps that are not on the home screen (the TV's Settings is among them), plus our own. */
@@ -950,6 +978,90 @@ final class HomeApps {
         d.setBounds(0, 0, w, h);
         d.draw(canvas);
         return shrink(b, TILE_W, TILE_H);
+    }
+
+    // MARK: - Square tiles (the home screen's shelf and All Apps)
+
+    /**
+     * The square tile, `size` px (rounded when drawn): the app's adaptive icon filling it, like a phone's home screen;
+     * without one, its logo (or its old-style icon) on a dark card with a faint glow of the brand's color. Shortcuts:
+     * their symbol in white. Slow (it draws the app's icon): background only.
+     */
+    static Bitmap squareTile(Context c, Item it, int size) {
+        Bitmap b = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(b);
+        Paint filter = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
+        if (it.kind == APP && it.pkg != null) {
+            Drawable icon = appIcon(c, it.pkg);
+            if (icon instanceof AdaptiveIconDrawable) {
+                // The layers are 1.5× the visible part (108 dp of which 72 show): a quarter of the tile on each side.
+                AdaptiveIconDrawable a = (AdaptiveIconDrawable) icon;
+                int pad = size / 4;
+                for (Drawable layer : new Drawable[] {a.getBackground(), a.getForeground()}) {
+                    if (layer == null) continue;
+                    layer.setBounds(-pad, -pad, size + pad, size + pad);
+                    layer.draw(canvas);
+                }
+                return b;
+            }
+            squareBackground(canvas, size, it.brand);
+            if (it.logo != null) {
+                boolean wide = it.logo.getWidth() > it.logo.getHeight() * 1.35f;
+                float max = size * (wide ? 0.74f : 0.5f) * Math.min(1.15f, it.logoScale);
+                float scale = Math.min(max / it.logo.getWidth(), max / it.logo.getHeight());
+                Bitmap small = Ui.downscale(it.logo, Math.round(it.logo.getWidth() * scale), Math.round(it.logo.getHeight() * scale));
+                canvas.drawBitmap(small, Math.round((size - small.getWidth()) / 2f), Math.round((size - small.getHeight()) / 2f), filter);
+                if (small != it.logo) small.recycle();
+            } else if (icon != null) {
+                int s = Math.round(size * 0.6f);
+                icon.setBounds((size - s) / 2, (size - s) / 2, (size + s) / 2, (size + s) / 2);
+                icon.draw(canvas);
+            } else if (it.tile != null) {
+                float w = size * 0.92f, h = w * it.tile.getHeight() / it.tile.getWidth();
+                canvas.drawBitmap(it.tile, null, new RectF((size - w) / 2, (size - h) / 2, (size + w) / 2, (size + h) / 2), filter);
+            }
+            return b;
+        }
+        squareBackground(canvas, size, 0);
+        if (it.symbol != null) {
+            Symbols.warm(c, it.symbol, size * 0.3f);
+            Symbols.draw(c, canvas, it.symbol, size / 2f, size / 2f, size * 0.3f, 0xF2FFFFFF);
+        }
+        return b;
+    }
+
+    /** A dark card, with the brand's color glowing faintly from below when there is one. */
+    private static void squareBackground(Canvas canvas, int size, int brand) {
+        Paint bg = new Paint();
+        bg.setShader(new LinearGradient(0, 0, 0, size, 0xFF30323B, 0xFF1B1C22, Shader.TileMode.CLAMP));
+        canvas.drawRect(0, 0, size, size, bg);
+        if (brand == 0) return;
+        Paint glow = new Paint();
+        glow.setShader(new RadialGradient(size / 2f, size * 1.1f, size * 0.9f, Ui.alpha(brand, 0.42f), 0x00000000, Shader.TileMode.CLAMP));
+        canvas.drawRect(0, 0, size, size, glow);
+    }
+
+    /** The app's icon at the highest density it has, or null. */
+    private static Drawable appIcon(Context c, String pkg) {
+        try {
+            PackageManager pm = c.getPackageManager();
+            ApplicationInfo ai = pm.getApplicationInfo(pkg, 0);
+            Drawable icon = null;
+            if (ai.icon != 0) {
+                try {
+                    icon = pm.getResourcesForApplication(ai).getDrawableForDensity(ai.icon, DisplayMetrics.DENSITY_XXXHIGH, null);
+                } catch (PackageManager.NameNotFoundException | RuntimeException ignored) {
+                }
+            }
+            return icon != null ? icon : pm.getApplicationIcon(ai);
+        } catch (PackageManager.NameNotFoundException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** The TV's Wi-Fi settings (the top bar's Wi-Fi button). */
+    static Intent wifiSettings() {
+        return new Intent(Settings.ACTION_WIFI_SETTINGS);
     }
 
     /** No banner: the app's icon (in its proper shape, with some margin) on a dark card. */

@@ -279,6 +279,22 @@ final class HomeMode {
         AppLog.w("remote buttons service " + (on ? "on" : "off"));
     }
 
+    private static final String MEDIA_LISTENER = PKG + "/" + PKG + ".MediaListener";
+
+    /**
+     * What the home screen reads besides the apps: which app is playing (its now playing card, through MediaListener)
+     * and the apps' Watch Next list (Continue watching, READ_EPG_DATA). On in Free My TV mode, off with Original.
+     * Neither changes anything on the TV; a TV that refuses (low-memory TVs refuse listeners) just goes without.
+     */
+    private static void homeExtras(Adb adb, boolean on) {
+        try {
+            adb.shell("cmd notification " + (on ? "allow_listener " : "disallow_listener ") + MEDIA_LISTENER);
+            adb.shell("pm " + (on ? "grant " : "revoke ") + PKG + " " + WatchNext.PERMISSION);
+        } catch (IOException e) {
+            AppLog.w("home extras: " + e.getMessage());
+        }
+    }
+
     // MARK: - Switches (main process, from ModeJob)
 
     static void applyNow(Context c, String mode) {
@@ -393,6 +409,7 @@ final class HomeMode {
             s.put("mode", FREE).put("since", System.currentTimeMillis()).put("homeReverted", false)
                     .put("disabled", new JSONArray(sorted(disabled))).put("setupHome", setupHome);
             save(c, s);
+            homeExtras(adb, true);
             if (RemoteKeys.supported()) {
                 try {
                     remoteService(c, adb, true);
@@ -449,6 +466,7 @@ final class HomeMode {
             }
             record(adb, new HashSet<>(failed));
             restoreScreensaver(adb, s);
+            homeExtras(adb, false);
             try {
                 remoteService(c, adb, false);
             } catch (IOException e) {
@@ -644,6 +662,7 @@ final class HomeMode {
                         fixed.add(pkg);
                     }
                 }
+                if (!reverted) homeExtras(adb, true);   // an update of this app (or Android) can take them back
                 if (!reverted && !homeHolder(adb).contains(PKG)) {
                     adb.shell("cmd package set-home-activity " + HOME_ACTIVITY);
                     fixed.add(Ui.tr("the home screen"));

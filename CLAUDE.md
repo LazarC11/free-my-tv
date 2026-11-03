@@ -186,8 +186,15 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
   fetches the forecast again when the city changed).
   To check for newer APIs, compile against `platforms/android-26/android.jar`: only AGSL (`RuntimeShader`, guarded
   by a try/catch), `BitmapShader.setFilterMode` (guarded), `Recording.Node` and `Ui.Weighted` (the Android 9 font weight) should come up.
-- The home screen is drawn by hand on one Canvas (`HomeView`); the glass and the sky are AGSL shaders (`Shaders`,
-  Android 13+, with a fallback for 8 to 12). Keep it at 60 fps: no allocations in `onDraw`, no work on the UI thread.
+- The home screen is drawn by hand on one Canvas (`HomeView`): flat and dark, no glass. The background photo (your
+  photos, else the picks' images, else `wallpaper` colors) is decoded with its scrims baked in, so it is one texture;
+  the shelf's square tiles come from `HomeApps.squareTile` (the adaptive icon, else the logo on a dark card). The now
+  playing card reads media sessions (`NowPlaying`, allowed through the `MediaListener` notification listener) and
+  Continue watching reads Android TV's Watch Next list (`WatchNext`, `READ_EPG_DATA`); the switch grants both over ADB
+  (`HomeMode.homeExtras`) and Original takes them back. The settings screen still uses the glass (`Scene`, `Shaders`).
+  The screensaver (`DreamView`) plays `LiveScenes` (aquarium, fireplace, northern lights): still parts painted once,
+  only what moves drawn per frame, 30 fps on `Ui.LEGACY`.
+  Keep it at 60 fps: no allocations in `onDraw`, no work on the UI thread.
 - Some TVs draw their UI at 1280×720 on a 1080p panel (TCL's 1 GB models: `ro.surface_flinger.max_graphics_width`
   and `_height`, `ro.config.low_ram`). There every pixel and every MB counts: `Backdrop` builds its images at the UI's
   size (and the picks use TMDB's w1280), and the shelf logos have a copy at the resting size and one at the focused
