@@ -52,31 +52,32 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * The home screen: dark, clean and flat, drawn by hand on one Canvas.
- *  - the background: a photo that changes every 30 s with a slow crossfade (your own photos, else the picks' images,
- *    else soft color gradients), darkened where the text sits;
- *  - top left, the big clock with the date and the weather; top right, round buttons: Wi-Fi, Live TV and TV Settings;
- *  - the shelf: the apps as rounded squares (the focused one grows, with a white ring and its name below), then All Apps;
- *  - below it, always there, the inputs (Live TV and every HDMI input, the ones with no device dimmed); at the right,
- *    what's playing (cover, title, artist), only while something plays;
- *  - ↓ from there scrolls down to the rows: Continue watching (the apps' Watch Next list), then movies and shows for you.
+ * The home screen, drawn by hand on one Canvas:
+ *  - the background: a full-screen photo that changes every 30 s with a slow crossfade (your own photos, else the
+ *    picks' images, else soft color gradients), darkened only toward the bottom;
+ *  - in the middle, the big clock, with the date and the weather under it; top right, round buttons: Wi-Fi, Live TV
+ *    and TV Settings;
+ *  - along the bottom, the shelf: the apps as rounded squares, centered (the focused one rises, with its name below),
+ *    then All Apps;
+ *  - just above it, always there, the inputs (Live TV and every HDMI input, the ones with no device dimmed) at the
+ *    left and, at the right, what's playing (cover, title, artist), only while something plays;
+ *  - ↓ from the shelf scrolls down to the rows: Continue watching (the apps' Watch Next list), then movies and shows.
  * Measurements are in a 1920×1080 space (k = width / 1920).
  */
 final class HomeView extends View implements Choreographer.FrameCallback, HomeData.Listener, Recs.Listener,
         NowPlaying.Listener {
     private static final float M = 96, RIGHT = 1824, CONTENT_W = RIGHT - M;
-    // Top: the round buttons at the right, the clock block at the left.
-    private static final float TOP_CY = 96, TOP_D = 68, TOP_GAP = 20;
-    private static final float DATE_BASE = 150, CLOCK_BASE = 332, WEATHER_BASE = 410;
-    // The shelf: square tiles; the focused one grows by GROW.
-    private static final float SHELF_TOP = 500, TILE = 160, TILE_GAP = 30, TILE_R = 36, GROW = 0.1f;
-    private static final int SHELF_SLOTS = 9;
-    // Inputs and the now playing card, side by side under the shelf.
-    private static final float INPUTS_TITLE = 790, CHIPS_TOP = 814, CHIP_H = 76;
-    private static final float NP_W = 600, NP_H = 132, NP_TOP = 786, NP_ART = 108;
-    private static final float PEEK_BASE = 1028;
+    // Top right: the round buttons. The clock block, centered.
+    private static final float TOP_CY = 84, TOP_D = 60, TOP_GAP = 16;
+    private static final float CLOCK_BASE = 440, DATE_BASE = 512;
+    // The shelf along the bottom: square tiles, centered; the focused one grows by GROW.
+    private static final float SHELF_TOP = 880, TILE = 124, TILE_GAP = 28, TILE_R = 28, GROW = 0.12f;
+    private static final int SHELF_SLOTS = 11;
+    // Just above it: the inputs at the left, the now playing card at the right.
+    private static final float CHIPS_TOP = 776, CHIP_H = 56;
+    private static final float NP_W = 470, NP_H = 96, NP_TOP = 756, NP_ART = 72;
     // The rows below (page coordinates: they start under the first screen).
-    private static final float ROWS_TOP = 1100, ROW_H = 400, CARD_W = 400, CARD_H = 225, CARD_GAP = 32, CARD_R = 22;
+    private static final float ROWS_TOP = 1150, ROW_H = 400, CARD_W = 400, CARD_H = 225, CARD_GAP = 32, CARD_R = 22;
     private static final int ROW_SLOTS = 4;
     // All Apps.
     private static final int COLS = 8;
@@ -86,6 +87,8 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
     private static final long BG_EVERY = 30_000, BG_FADE = 1800, TOAST_MS = 6000, HOLD_MS = 550, BURST_MS = 1500;
     private static final int Z_TOP = 0, Z_SHELF = 1, Z_INPUTS = 2, Z_ROWS = 3;
     private static final int WHITE = 0xFFF5F5F7, INK = 0xFF111114;
+    /** The resting buttons, chips and card: dark and see-through over the photo, with a faint light edge. */
+    private static final int PILL = 0x59000000, HAIRLINE = 0x33FFFFFF;
     private static final ExecutorService LOADER = Executors.newSingleThreadExecutor();
     private static final ExecutorService IMAGES = Executors.newSingleThreadExecutor();
     /** Square tiles by package and size, kept across visits (the icon drawing is the slow part of a reload). */
@@ -290,21 +293,26 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
     }
 
     private void makePaints() {
-        datePaint = paint(Ui.medium, 34, 0xD9FFFFFF);
-        clockPaint = paint(Ui.light, 196, WHITE);
+        datePaint = paint(Ui.medium, 32, 0xE6FFFFFF);
+        datePaint.setShadowLayer(16 * k, 0, 2 * k, 0x66000000);
+        clockPaint = paint(Ui.light, 260, WHITE);
         clockPaint.setFontFeatureSettings("'tnum'");
-        weatherPaint = paint(Ui.regular, 30, 0xD9FFFFFF);
-        labelPaint = paint(Ui.medium, 26, WHITE);
+        clockPaint.setLetterSpacing(0.03f);
+        clockPaint.setTextAlign(Paint.Align.CENTER);
+        clockPaint.setShadowLayer(30 * k, 0, 4 * k, 0x59000000);
+        weatherPaint = paint(Ui.regular, 32, 0xE6FFFFFF);
+        weatherPaint.setShadowLayer(16 * k, 0, 2 * k, 0x66000000);
+        labelPaint = paint(Ui.medium, 24, WHITE);
         labelPaint.setTextAlign(Paint.Align.CENTER);
         tipPaint = paint(Ui.medium, 22, WHITE);
         tipPaint.setTextAlign(Paint.Align.CENTER);
-        chipPaint = paint(Ui.medium, 26, WHITE);
+        chipPaint = paint(Ui.medium, 22, WHITE);
         sectionPaint = paint(Ui.semibold, 26, 0xB3FFFFFF);
         cardTitlePaint = paint(Ui.semibold, 26, WHITE);
         cardSubPaint = paint(Ui.regular, 22, 0x99FFFFFF);
-        npTitlePaint = paint(Ui.semibold, 28, WHITE);
-        npArtistPaint = paint(Ui.regular, 24, 0xB3FFFFFF);
-        npSmallPaint = paint(Ui.semibold, 18, 0x99FFFFFF);
+        npTitlePaint = paint(Ui.semibold, 24, WHITE);
+        npArtistPaint = paint(Ui.regular, 20, 0xB3FFFFFF);
+        npSmallPaint = paint(Ui.semibold, 15, 0x99FFFFFF);
         npSmallPaint.setLetterSpacing(0.08f);
         toastPaint = paint(Ui.medium, 26, WHITE);
         gridLabelPaint = paint(Ui.regular, 22, 0xCCFFFFFF);
@@ -312,8 +320,8 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         sheetTitlePaint = paint(Ui.semibold, 44, WHITE);
         for (String s : new String[] {"live_tv", "tv_settings", "settings", "tv", "hdmi", "gamepad", "play", "speaker",
                 "chevron_down", "bell", "apps"}) {
-            Symbols.warm(getContext(), s, 28 * k);
-            Symbols.warm(getContext(), s, 30 * k);
+            Symbols.warm(getContext(), s, 24 * k);
+            Symbols.warm(getContext(), s, 26 * k);
         }
         makeShadow();
     }
@@ -533,7 +541,7 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
 
     private void updateTrackText() {
         if (npTitlePaint == null || track == null) return;
-        float textW = (NP_W - NP_H - 50) * k;
+        float textW = (NP_W - NP_ART - 60) * k;
         npTitle = fit(track.title, npTitlePaint, textW);
         npArtist = fit(track.artist, npArtistPaint, textW);
         String label = Ui.tr("Now playing").toUpperCase(Ui.locale());
@@ -563,9 +571,7 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
             return;
         }
         weatherSymbol = Symbols.weather(wx.code, wx.isDay);
-        String city = Prefs.city();
-        weatherText = HomeData.degrees(wx.temp) + "  ·  " + HomeData.condition(wx.code, wx.isDay) + "  ·  "
-                + HomeData.highLow(wx, "  ") + (city.isEmpty() ? "" : "  ·  " + city);
+        weatherText = HomeData.degrees(wx.temp) + "  " + HomeData.condition(wx.code, wx.isDay);
     }
 
     private void updateNetwork() {
@@ -678,13 +684,13 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         chipX = new float[n];
         chipW = new float[n];
         chipText = new String[n];
-        float x = M * k, pad = 30 * k, icon = 30 * k, gap = 14 * k;
+        float x = M * k, pad = 22 * k, icon = 24 * k, gap = 12 * k;
         for (int i = 0; i < n; i++) {
             HomeApps.Item it = inputs.get(i);
-            chipText[i] = fit(it.label, chipPaint, 280 * k);
+            chipText[i] = fit(it.label, chipPaint, 240 * k);
             chipX[i] = x;
             chipW[i] = pad + icon + gap + chipPaint.measureText(chipText[i]) + pad;
-            x += chipW[i] + 18 * k;
+            x += chipW[i] + 14 * k;
         }
         retarget();
     }
@@ -768,7 +774,7 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
             int found = -1;
             for (int i = 0; i < rows.size(); i++) if (rows.get(i).title.equals(focusedRow)) found = i;
             if (found >= 0) rowIndex = found;
-            else if (rows.isEmpty()) zone = inputItems() > 0 ? Z_INPUTS : Z_SHELF;
+            else if (rows.isEmpty()) zone = Z_SHELF;
             else rowIndex = Math.min(rowIndex, rows.size() - 1);
         }
         refreshRowText();
@@ -928,7 +934,7 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
      * A photo cropped to w × h. As a background (`scrims`), darkened where the text sits (baked in once, so drawing it is
      * one texture) and kept in GPU memory.
      */
-    private static Bitmap decodeFile(File f, int w, int h, boolean scrims) {
+    static Bitmap decodeFile(File f, int w, int h, boolean scrims) {
         try {
             BitmapFactory.Options bounds = new BitmapFactory.Options();
             bounds.inJustDecodeBounds = true;
@@ -954,13 +960,11 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         }
     }
 
-    /** The scrims: a little at the top, more at the bottom (the shelf and the inputs), and behind the clock. */
+    /** The scrims: a little at the top (the buttons), most at the bottom (the inputs and the shelf); the photo stays clear. */
     private static void darken(Canvas c, int w, int h) {
         Paint p = new Paint(Paint.DITHER_FLAG);
-        p.setShader(new LinearGradient(0, 0, 0, h, new int[] {0x80000000, 0x1A000000, 0x40000000, 0xE6000000},
-                new float[] {0, 0.36f, 0.5f, 1}, Shader.TileMode.CLAMP));
-        c.drawRect(0, 0, w, h, p);
-        p.setShader(new RadialGradient(w * 0.17f, h * 0.27f, w * 0.5f, 0x80000000, 0x00000000, Shader.TileMode.CLAMP));
+        p.setShader(new LinearGradient(0, 0, 0, h, new int[] {0x4D000000, 0x14000000, 0x1F000000, 0x8C000000, 0xD9000000},
+                new float[] {0, 0.25f, 0.55f, 0.78f, 1}, Shader.TileMode.CLAMP));
         c.drawRect(0, 0, w, h, p);
     }
 
@@ -1099,7 +1103,7 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
     }
 
     private float chipsRight() {
-        return track != null ? (RIGHT - NP_W - 40) * k : RIGHT * k;
+        return track != null ? (RIGHT - NP_W - 32) * k : RIGHT * k;
     }
 
     // MARK: - Drawing
@@ -1121,12 +1125,11 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
                 drawTop(c, 1 - gone);
                 drawClock(c, 1 - gone);
             }
-            if (scroll < (SHELF_TOP + TILE + 120) * k) drawShelf(c);
             drawInputs(c);
             drawNowPlaying(c);
+            drawShelf(c);
             drawRows(c, scroll);
             c.restoreToCount(save);
-            if (!rows.isEmpty() && gone < 1) drawPeek(c, 1 - gone);
         }
         if (s > 0.001f) drawSheet(c, s);
         drawToast(c);
@@ -1150,18 +1153,26 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         }
     }
 
+    /** The big clock in the middle, and under it the date and the weather on one line. */
     private void drawClock(Canvas c, float alpha) {
-        float x = M * k;
-        textAt(c, dateText, x, DATE_BASE * k, datePaint, alpha);
-        textAt(c, clockText, x - Ui.leftBearing(clockPaint, clockText), CLOCK_BASE * k, clockPaint, alpha);
-        if (!weatherText.isEmpty()) {
-            float size = 34 * k, base = WEATHER_BASE * k, sw = 0;
-            if (weatherSymbol != null) {
-                sw = Symbols.width(getContext(), weatherSymbol, size);
-                Symbols.draw(getContext(), c, weatherSymbol, x + sw / 2, base - Ui.halfCap(weatherPaint), size, Ui.alpha(0xFFFFFFFF, 0.9f * alpha));
-            }
-            textAt(c, weatherText, x + sw + 14 * k, base, weatherPaint, alpha);
+        float cx = w / 2f;
+        textAt(c, clockText, cx, CLOCK_BASE * k, clockPaint, alpha);
+        float base = DATE_BASE * k, dateW = datePaint.measureText(dateText);
+        if (weatherText.isEmpty()) {
+            textAt(c, dateText, cx - dateW / 2, base, datePaint, alpha);
+            return;
         }
+        float size = 32 * k, gap = 36 * k, sw = weatherSymbol == null ? 0 : Symbols.width(getContext(), weatherSymbol, size) + 12 * k;
+        float total = dateW + gap + sw + weatherPaint.measureText(weatherText), x = cx - total / 2;
+        textAt(c, dateText, x, base, datePaint, alpha);
+        x += dateW + gap;
+        fill.setShader(null);
+        fill.setColor(Ui.alpha(0x80FFFFFF, alpha));
+        c.drawCircle(x - gap / 2, base - Ui.halfCap(datePaint), 3 * k, fill);
+        if (weatherSymbol != null) {
+            Symbols.draw(getContext(), c, weatherSymbol, x + (sw - 12 * k) / 2, base - Ui.halfCap(weatherPaint), size, Ui.alpha(0xFFFFFFFF, 0.9f * alpha));
+        }
+        textAt(c, weatherText, x + sw, base, weatherPaint, alpha);
     }
 
     /** Text at `alpha` of its paint's own opacity. */
@@ -1181,17 +1192,22 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
             float cx = x + d / 2, r = d / 2 * grow;
             topRects[i].set(cx - r, cy - r, cx + r, cy + r);
             fill.setShader(null);
-            fill.setColor(blend(0x29FFFFFF, WHITE, f));
+            fill.setColor(blend(PILL, WHITE, f));
             fill.setAlpha(Math.round(fill.getAlpha() * alpha));
             c.drawCircle(cx, cy, r, fill);
+            if (f < 0.99f) {
+                ring.setStrokeWidth(Math.max(1, 1.5f * k));
+                ring.setColor(Ui.alpha(HAIRLINE, (1 - f) * alpha));
+                c.drawCircle(cx, cy, r, ring);
+            }
             int ink = Ui.alpha(blend(WHITE, INK, f), alpha);
             int key = topKeys.get(i);
             if (key == TOP_WIFI) {
-                drawNetwork(c, cx, cy + 4 * k, 15 * k * grow, ink);
+                drawNetwork(c, cx, cy + 4 * k, 13 * k * grow, ink);
             } else {
-                Symbols.draw(getContext(), c, key == TOP_LIVE ? "live_tv" : "settings", cx, cy, 28 * k * grow, ink);
+                Symbols.draw(getContext(), c, key == TOP_LIVE ? "live_tv" : "settings", cx, cy, 24 * k * grow, ink);
             }
-            if (f > 0.01f) textAt(c, topLabel(key), cx, cy + r + 40 * k, tipPaint, f * alpha);
+            if (f > 0.01f) textAt(c, topLabel(key), cx, cy + r + 36 * k, tipPaint, f * alpha);
             x += d + gap;
         }
     }
@@ -1226,8 +1242,14 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         c.drawCircle(cx, cy - r * 0.05f, r * 0.16f, fill);
     }
 
+    /** The left edge of the first tile: the shelf is centered (it scrolls when it holds more than SHELF_SLOTS). */
+    private float shelfLeft() {
+        int n = Math.min(shelf.size(), SHELF_SLOTS);
+        return (w - (n * TILE + (n - 1) * TILE_GAP) * k) / 2f;
+    }
+
     private void drawShelf(Canvas c) {
-        float size = TILE * k, step = (TILE + TILE_GAP) * k, top = SHELF_TOP * k, x0 = M * k - shelfScroll.value;
+        float size = TILE * k, step = (TILE + TILE_GAP) * k, top = SHELF_TOP * k, x0 = shelfLeft() - shelfScroll.value;
         int focused = -1;
         for (int i = 0; i < shelf.size(); i++) {
             float x = x0 + i * step + tileSlide[i].value;
@@ -1244,25 +1266,29 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
             float f = Ui.clamp(tileFocus[i].value);
             if (f < 0.01f) continue;
             float cx = x0 + i * step + tileSlide[i].value + size / 2;
-            textAt(c, shelfLabels[i], cx, top + size * (1 + GROW / 2) + 52 * k, labelPaint, f);
+            textAt(c, shelfLabels[i], cx, top + size * (1 + GROW / 2) + 40 * k, labelPaint, f);
         }
     }
 
+    /** A tile: a soft shadow under it, a faint edge; focused, it grows and rises with a deeper shadow and a white ring. */
     private void drawTile(Canvas c, int i, float x, float top, float size) {
         HomeApps.Item it = shelf.get(i);
         float v = tileFocus[i].value, f = Ui.clamp(v);
         boolean lifted = reordering && i == shelfIndex;
         float grow = 1 + GROW * v + (lifted ? 0.06f * lift.value : 0);
-        float cx = x + size / 2, cy = top + size / 2 - (lifted ? 18 * k * lift.value : 0);
+        float cx = x + size / 2, cy = top + size / 2 - 8 * k * v - (lifted ? 16 * k * lift.value : 0);
         float half = size * grow / 2;
         rect.set(cx - half, cy - half, cx + half, cy + half);
-        if (f > 0.01f) drawShadow(c, rect, f);
+        drawShadow(c, rect, 0.45f + 0.55f * f);
         float radius = TILE_R * k * grow;
         drawSquare(c, it, rect, radius, 1);
+        ring.setStrokeWidth(Math.max(1, 1.5f * k));
+        ring.setColor(0x1FFFFFFF);
+        c.drawRoundRect(rect, radius, radius, ring);
         if (f > 0.01f) {
             ring.setColor(Ui.alpha(WHITE, f));
-            ring.setStrokeWidth(4 * k);
-            float o = 7 * k;
+            ring.setStrokeWidth(3 * k);
+            float o = 6 * k;
             rect.inset(-o, -o);
             c.drawRoundRect(rect, radius + o, radius + o, ring);
         }
@@ -1288,7 +1314,7 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
     private void drawShadow(Canvas c, RectF r, float f) {
         if (shadow == null) return;
         float pad = r.width() * (shadow.getWidth() / (float) Math.round(TILE * k) - 1) / 2;
-        float drop = 16 * k;
+        float drop = 10 * k * (0.6f + 0.4f * f);
         rect2.set(r.left - pad, r.top - pad + drop, r.right + pad, r.bottom + pad + drop);
         shadowPaint.setAlpha(Math.round(150 * f));
         c.drawBitmap(shadow, null, rect2, shadowPaint);
@@ -1296,9 +1322,9 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
 
     private final RectF rect2 = new RectF();
 
+    /** The inputs: dark pills over the photo, the focused one white; those with no device dimmed. */
     private void drawInputs(Canvas c) {
         if (inputs.isEmpty()) return;
-        textAt(c, Ui.tr("Inputs"), M * k, INPUTS_TITLE * k, sectionPaint, 1);
         float top = CHIPS_TOP * k, ch = CHIP_H * k, limit = chipsRight();
         int save = c.save();
         c.clipRect(0, top - 20 * k, limit + 12 * k, top + ch + 20 * k);
@@ -1312,13 +1338,18 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
             c.scale(grow, grow, x + cw / 2, cy);
             rect.set(x, top, x + cw, top + ch);
             fill.setShader(null);
-            fill.setColor(blend(it.connected ? 0x2EFFFFFF : 0x17FFFFFF, WHITE, f));
+            fill.setColor(blend(PILL, WHITE, f));
             c.drawRoundRect(rect, ch / 2, ch / 2, fill);
-            int ink = blend(it.connected ? WHITE : 0x8CFFFFFF, INK, f);
+            if (f < 0.99f) {
+                ring.setStrokeWidth(Math.max(1, 1.5f * k));
+                ring.setColor(Ui.alpha(HAIRLINE, 1 - f));
+                c.drawRoundRect(rect, ch / 2, ch / 2, ring);
+            }
+            int ink = blend(it.connected ? WHITE : 0x80FFFFFF, INK, f);
             String symbol = it.kind == HomeApps.LIVE_TV ? "tv" : it.symbol != null ? it.symbol : "hdmi";
-            Symbols.draw(getContext(), c, symbol, x + 45 * k, cy, 28 * k, ink);
+            Symbols.draw(getContext(), c, symbol, x + 34 * k, cy, 24 * k, ink);
             chipPaint.setColor(ink);
-            c.drawText(chipText[i], x + 74 * k, cy + Ui.halfCap(chipPaint), chipPaint);
+            c.drawText(chipText[i], x + 58 * k, cy + Ui.halfCap(chipPaint), chipPaint);
             chipPaint.setColor(WHITE);
             c.restoreToCount(s2);
         }
@@ -1337,14 +1368,12 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
                 : c.save();
         c.scale(grow, grow, rect.centerX(), cy);
         fill.setShader(null);
-        fill.setColor(blend(0x99141418, 0xD924242A, f));
-        float radius = 30 * k;
+        fill.setColor(blend(PILL, 0xCC1C1C21, f));
+        float radius = 24 * k;
         c.drawRoundRect(rect, radius, radius, fill);
-        if (f > 0.01f) {
-            ring.setColor(Ui.alpha(WHITE, f));
-            ring.setStrokeWidth(4 * k);
-            c.drawRoundRect(rect, radius, radius, ring);
-        }
+        ring.setStrokeWidth(f > 0.01f ? 3 * k : Math.max(1, 1.5f * k));
+        ring.setColor(blend(HAIRLINE, WHITE, f));
+        c.drawRoundRect(rect, radius, radius, ring);
         float pad = (NP_H - NP_ART) / 2 * k, art = NP_ART * k;
         RectF ar = rect2;
         ar.set(left + pad, cy - art / 2, left + pad + art, cy + art / 2);
@@ -1356,36 +1385,28 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
             npArt.setLocalMatrix(matrix);
             image.setShader(npArt);
             image.setAlpha(255);
-            c.drawRoundRect(ar, 18 * k, 18 * k, image);
+            c.drawRoundRect(ar, 12 * k, 12 * k, image);
             image.setShader(null);
         } else {
             fill.setColor(0xFF2E2F36);
-            c.drawRoundRect(ar, 18 * k, 18 * k, fill);
-            Symbols.draw(getContext(), c, "play", ar.centerX(), ar.centerY(), 34 * k, 0xCCFFFFFF);
+            c.drawRoundRect(ar, 12 * k, 12 * k, fill);
+            Symbols.draw(getContext(), c, "play", ar.centerX(), ar.centerY(), 26 * k, 0xCCFFFFFF);
         }
-        float tx = ar.right + 22 * k;
-        c.drawText(npLabel, tx, cy - 30 * k, npSmallPaint);
+        float tx = ar.right + 18 * k;
+        c.drawText(npLabel, tx, cy - 22 * k, npSmallPaint);
         c.drawText(npTitle, tx, cy + 6 * k, npTitlePaint);
-        c.drawText(npArtist, tx, cy + 40 * k, npArtistPaint);
+        c.drawText(npArtist, tx, cy + 30 * k, npArtistPaint);
         if (track != null && track.duration > 0) {
-            float barW = left + cw - 28 * k - tx, by = cy + 54 * k;
+            float barW = left + cw - 24 * k - tx, by = top + ch - 10 * k;
             float p = Ui.clamp(track.positionNow() / (float) track.duration);
             fill.setColor(0x33FFFFFF);
-            rect.set(tx, by, tx + barW, by + 4 * k);
-            c.drawRoundRect(rect, 2 * k, 2 * k, fill);
+            rect.set(tx, by, tx + barW, by + 3 * k);
+            c.drawRoundRect(rect, 1.5f * k, 1.5f * k, fill);
             fill.setColor(WHITE);
             rect.right = tx + barW * p;
-            c.drawRoundRect(rect, 2 * k, 2 * k, fill);
+            c.drawRoundRect(rect, 1.5f * k, 1.5f * k, fill);
         }
         c.restoreToCount(save);
-    }
-
-    /** At the bottom of the first screen: the first row's name and an arrow, so you know there's more below. */
-    private void drawPeek(Canvas c, float alpha) {
-        String title = rows.get(0).title;
-        float y = PEEK_BASE * k;
-        textAt(c, title, w / 2f, y, tipPaint, 0.75f * alpha);
-        Symbols.draw(getContext(), c, "chevron_down", w / 2f, y + 26 * k, 28 * k, Ui.alpha(WHITE, 0.6f * alpha));
     }
 
     private void drawRows(Canvas c, float scroll) {
@@ -1636,31 +1657,39 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         int before = zone * 10_000 + topIndex * 1000 + shelfIndex * 100 + inputIndex * 10 + rowIndex;
         int beforeCard = zone == Z_ROWS && rowIndex < rows.size() ? rows.get(rowIndex).index : -1;
         switch (zone) {
+            // Top to bottom: the buttons, the inputs (and the now playing card), the shelf, the rows.
             case Z_TOP:
                 if (dx != 0) topIndex = Math.max(0, Math.min(topKeys.size() - 1, topIndex + dx));
-                if (dy > 0) zone = Z_SHELF;
-                break;
-            case Z_SHELF:
-                if (dx != 0) shelfIndex = Math.max(0, Math.min(shelf.size() - 1, shelfIndex + dx));
-                if (dy < 0) {
-                    zone = Z_TOP;
-                    topIndex = topKeys.size() - 1;
-                } else if (dy > 0) {
+                if (dy > 0) {
                     if (inputItems() > 0) {
                         zone = Z_INPUTS;
-                        inputIndex = nearestInput(tileCenter(shelfIndex));
-                    } else if (!rows.isEmpty()) {
-                        zone = Z_ROWS;
-                        rowIndex = 0;
+                        inputIndex = track != null ? inputs.size() : Math.max(0, inputs.size() - 1);
+                    } else {
+                        zone = Z_SHELF;
                     }
                 }
                 break;
             case Z_INPUTS:
                 if (dx != 0) inputIndex = Math.max(0, Math.min(inputItems() - 1, inputIndex + dx));
                 if (dy < 0) {
+                    zone = Z_TOP;
+                    topIndex = topKeys.size() - 1;
+                } else if (dy > 0) {
                     zone = Z_SHELF;
                     shelfIndex = nearestTile(inputIndex < inputs.size() && inputIndex < chipX.length
                             ? chipX[inputIndex] - chipScroll.value + chipW[inputIndex] / 2 : (RIGHT - NP_W / 2) * k);
+                }
+                break;
+            case Z_SHELF:
+                if (dx != 0) shelfIndex = Math.max(0, Math.min(shelf.size() - 1, shelfIndex + dx));
+                if (dy < 0) {
+                    if (inputItems() > 0) {
+                        zone = Z_INPUTS;
+                        inputIndex = nearestInput(tileCenter(shelfIndex));
+                    } else {
+                        zone = Z_TOP;
+                        topIndex = topKeys.size() - 1;
+                    }
                 } else if (dy > 0 && !rows.isEmpty()) {
                     zone = Z_ROWS;
                     rowIndex = 0;
@@ -1672,7 +1701,7 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
                 if (dy > 0 && rowIndex < rows.size() - 1) rowIndex++;
                 if (dy < 0) {
                     if (rowIndex > 0) rowIndex--;
-                    else zone = inputItems() > 0 ? Z_INPUTS : Z_SHELF;
+                    else zone = Z_SHELF;
                 }
                 break;
             default:
@@ -1690,7 +1719,7 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
     }
 
     private float tileCenter(int i) {
-        return M * k - shelfScroll.target + i * (TILE + TILE_GAP) * k + TILE * k / 2;
+        return shelfLeft() - shelfScroll.target + i * (TILE + TILE_GAP) * k + TILE * k / 2;
     }
 
     private int nearestTile(float x) {
@@ -2111,7 +2140,7 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
             r.set(topRects[i]);
             r.offset(0, -scroll);
         } else if (group == A11Y_SHELF) {
-            float x = M * k - shelfScroll.value + i * (TILE + TILE_GAP) * k;
+            float x = shelfLeft() - shelfScroll.value + i * (TILE + TILE_GAP) * k;
             r.set(x, SHELF_TOP * k - scroll, x + TILE * k, (SHELF_TOP + TILE) * k - scroll);
         } else if (group == A11Y_INPUTS) {
             if (i < inputs.size() && i < chipX.length) {
