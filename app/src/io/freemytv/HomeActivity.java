@@ -42,6 +42,7 @@ public class HomeActivity extends Activity implements SettingsHost {
         }
         Ui.init(this);
         home = new HomeView(this);
+        home.inputPreview = this::previewInput;
         root = new FrameLayout(this);
         root.addView(home);
         setContentView(root);
@@ -107,6 +108,143 @@ public class HomeActivity extends Activity implements SettingsHost {
         if (home != null && home.onKey(event)) return true;
         return super.dispatchKeyEvent(event);
     }
+
+    // MARK: - Live input preview, behind the home screen
+
+    private android.media.tv.TvView tv;
+    private String tuned;
+    private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+
+    /**
+     * The side bar's focused HDMI input plays behind the home screen, full screen, picture and sound (its device is
+     * not woken or switched over HDMI-CEC); null stops it and lets go of the input.
+     */
+    private void previewInput(String inputId) {
+        if (inputId == null) {
+            stopPreview();
+            return;
+        }
+        if (tv == null) {
+            tv = new android.media.tv.TvView(this);
+            tv.setFocusable(false);
+            tv.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+            tv.setCallback(tvCallback);
+            root.addView(tv, 0);   // under the home screen, which fades its photo out over it
+        }
+        tv.setVisibility(View.VISIBLE);
+        if (inputId.equals(tuned)) return;
+        tuned = inputId;
+        main.removeCallbacks(widgetGone);   // still showing: no "gone" in between
+        tclHomeWidget(1);
+        try {
+            tv.setStreamVolume(1f);   // with its sound
+            android.os.Bundle params = new android.os.Bundle();
+            params.putBoolean("isCecDeviceDisable", true);   // TCL: no HDMI-CEC (doesn't wake or switch the device)
+            tv.tune(inputId, android.media.tv.TvContract.buildChannelUriForPassthroughInput(inputId), params);
+            AppLog.w("input preview: tuning " + inputId);
+        } catch (RuntimeException e) {
+            AppLog.w("input preview: " + e.getMessage());
+        }
+    }
+
+    private final android.graphics.Rect clockArea = new android.graphics.Rect();
+    private final Bitmap clockSample = Bitmap.createBitmap(24, 8, Bitmap.Config.ARGB_8888);
+
+    /**
+     * Every 1.5 s while an input plays: its picture behind the clock (a copy the GPU makes of the video's surface,
+     * shrunk to 24 × 8), averaged, so the clock follows the input's colors. Protected video can't be copied: then the
+     * clock keeps its color.
+     */
+    private final Runnable sampleClock = new Runnable() {
+        @Override public void run() {
+            if (tv == null || tuned == null || home == null) return;
+            android.view.SurfaceView surface = null;
+            for (int i = 0; i < tv.getChildCount(); i++) {
+                if (tv.getChildAt(i) instanceof android.view.SurfaceView) surface = (android.view.SurfaceView) tv.getChildAt(i);
+            }
+            if (surface == null || surface.getHolder().getSurface() == null || !surface.getHolder().getSurface().isValid()) return;
+            home.clockArea(clockArea);
+            try {
+                android.view.PixelCopy.request(surface, clockArea, clockSample, result -> {
+                    if (result != android.view.PixelCopy.SUCCESS || tuned == null || home == null) return;
+                    long r = 0, g = 0, b = 0;
+                    int n = clockSample.getWidth() * clockSample.getHeight();
+                    for (int y = 0; y < clockSample.getHeight(); y++) for (int x = 0; x < clockSample.getWidth(); x++) {
+                        int p = clockSample.getPixel(x, y);
+                        r += (p >> 16) & 255;
+                        g += (p >> 8) & 255;
+                        b += p & 255;
+                    }
+                    home.liveClockColor((int) (r / n) << 16 | (int) (g / n) << 8 | (int) (b / n));
+                }, main);
+            } catch (RuntimeException e) {
+                AppLog.w("input preview: clock color: " + e.getMessage());
+                return;
+            }
+            main.postDelayed(this, 1500);
+        }
+    };
+
+    private void stopPreview() {
+        main.removeCallbacks(sampleClock);
+        if (tv == null || tuned == null) return;
+        tuned = null;
+        try {
+            tv.reset();
+        } catch (RuntimeException e) {
+            AppLog.w("input preview: " + e.getMessage());
+        }
+        tv.setVisibility(View.GONE);
+        if (home != null) home.inputLive(false);
+        // After the TV has gone back to its own source: the picture service gives the home screen its picture mode.
+        main.postDelayed(widgetGone, 1000);
+        AppLog.w("input preview: stopped");
+    }
+
+    private final android.media.tv.TvView.TvInputCallback tvCallback = new android.media.tv.TvView.TvInputCallback() {
+        @Override public void onVideoAvailable(String inputId) {
+            AppLog.w("input preview: playing " + inputId);
+            // TCL marks the input's app as live TV again once its picture starts: said again now, so that the home
+            // screen's picture mode comes back when the preview ends.
+            tclHomeWidget(1);
+            if (home != null && inputId.equals(tuned)) {
+                home.inputLive(true);
+                main.removeCallbacks(sampleClock);
+                main.postDelayed(sampleClock, 300);
+            }
+        }
+
+        @Override public void onVideoUnavailable(String inputId, int reason) {
+            AppLog.w("input preview: no picture from " + inputId + " (" + reason + ")");
+            if (reason == android.media.tv.TvInputManager.VIDEO_UNAVAILABLE_REASON_TUNING) return;
+            if (home != null) home.inputLive(false);
+        }
+    };
+
+    /**
+     * TCL: an input playing on the home screen makes its picture service take the input's picture mode, and keep it
+     * after the preview ends. TCL's own home screen, with its live widget, tells the service when its preview shows (1)
+     * and goes (0): option 38 of TvPqManager.setOption. The same here, in order, off the main thread. Not a TCL: nothing.
+     */
+    private static void tclHomeWidget(int status) {
+        PQ.execute(() -> {
+            try {
+                Class<?> pq = Class.forName("com.tcl.tv.pq.TvPqManager");
+                Object manager = pq.getMethod("getInstance").invoke(null);
+                if (manager == null) return;
+                Object ok = pq.getMethod("setOption", int.class, int.class, String.class)
+                        .invoke(manager, 38, status, String.valueOf(status));
+                AppLog.w("input preview: home widget " + status + " -> " + ok);
+            } catch (ClassNotFoundException e) {
+                // not a TCL TV
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+                AppLog.w("input preview: home widget " + status + ": " + e);
+            }
+        });
+    }
+
+    private static final java.util.concurrent.ExecutorService PQ = java.util.concurrent.Executors.newSingleThreadExecutor();
+    private final Runnable widgetGone = () -> tclHomeWidget(0);
 
     // MARK: - Settings over the home screen
 

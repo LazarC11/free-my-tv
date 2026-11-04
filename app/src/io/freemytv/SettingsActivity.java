@@ -177,7 +177,8 @@ public class SettingsActivity extends Activity implements SettingsHost {
         private final List<String> pickLabels = new ArrayList<>();
         private boolean picking;
         private int pickFor, pickCurrent, pickReturn;
-        private static final int PICK_CITY = 0, PICK_LANGUAGE = -1;   // above 0: a remote button (index + 1)
+        private static final int PICK_CITY = 0, PICK_LANGUAGE = -1, PICK_PHOTO = -2;   // above 0: a remote button (index + 1)
+        private String photoStatus = "";   // Refresh photos: "Refreshing…", then how it went
         private final List<String> appPkgs = new ArrayList<>(), appLabels = new ArrayList<>();
         // The list editors (the shelf's apps, the side bar, the screensaver scenes): every candidate as {key, label,
         // sub, symbol}, the selected ones first and in order.
@@ -485,6 +486,11 @@ public class SettingsActivity extends Activity implements SettingsHost {
                             : Prefs.photos() ? Ui.plural("plural|one:{n} photo|other:{n} photos", photos) : Ui.tr("Off")));
                     out.add(row(K_VALUE, "music", Ui.tr("Music background"),
                             "album".equals(Prefs.musicBackground()) ? Ui.tr("Album cover") : Ui.tr("Artist photo")));
+                    // The photos of the day: see today's and pick one; or fetch a new batch now (else it comes daily).
+                    out.add(row(K_LINK, "photos-today", Ui.tr("Today's photos"), DailyPhoto.list(getContext()).size() + ""));
+                    Row refresh = row(K_ACTION, "photos-refresh", Ui.tr("Refresh photos"), photoStatus);
+                    refresh.symbol = "sync";
+                    out.add(refresh);
                     break;
                 }
                 case S_SAVER: {
@@ -694,6 +700,7 @@ public class SettingsActivity extends Activity implements SettingsHost {
                     case K_LINK:
                         if (r.key.equals("language")) openPicker(PICK_LANGUAGE);
                         else if (r.key.equals("city")) askCity();
+                        else if (r.key.equals("photos-today")) openPicker(PICK_PHOTO);
                         else if (r.key.startsWith("key:")) openPicker(Integer.parseInt(r.key.substring(4)) + 1);
                         break;
                     case K_CHECK: {
@@ -706,6 +713,10 @@ public class SettingsActivity extends Activity implements SettingsHost {
                         break;
                     }
                     case K_ACTION:
+                        if (r.key.equals("photos-refresh")) {
+                            refreshPhotos();
+                            break;
+                        }
                         if (r.key.equals("preview")) {
                             pause();
                             host.showPreview();
@@ -898,6 +909,13 @@ public class SettingsActivity extends Activity implements SettingsHost {
                 String[] choices = languageChoices();
                 for (String code : choices) pickLabels.add(code.equals("auto") ? Ui.tr("Automatic") : Ui.languageName(code));
                 pickCurrent = java.util.Arrays.asList(choices).indexOf(Prefs.language());
+            } else if (which == PICK_PHOTO) {
+                // Today's photos by name and place; one still downloading says so.
+                for (String[] p : DailyPhoto.list(getContext())) {
+                    String place = p[1].isEmpty() || p[1].equals(p[0]) ? "" : "  ·  " + p[1];
+                    pickLabels.add(p[0] + place + (p[2].isEmpty() ? "  (" + Ui.tr("downloading") + ")" : ""));
+                }
+                pickCurrent = DailyPhoto.picked(getContext());
             } else {
                 pickLabels.addAll(appLabels);
                 pickCurrent = appPkgs.indexOf(Prefs.keyApp(Prefs.KEYS[which - 1]));
@@ -916,10 +934,29 @@ public class SettingsActivity extends Activity implements SettingsHost {
                 HomeData.get(getContext()).settingsChanged();
             } else if (pickFor == PICK_LANGUAGE) {
                 Prefs.setLanguage(languageChoices()[at]);
+            } else if (pickFor == PICK_PHOTO) {
+                DailyPhoto.choose(getContext(), at);   // the home screen shows it when the settings close
             } else {
                 Prefs.setKeyApp(Prefs.KEYS[pickFor - 1], appPkgs.get(at));
             }
             closePicker();
+        }
+
+        /** Refresh photos: today's batch fetched now (in the background), how it went in the row. */
+        private void refreshPhotos() {
+            if (Ui.tr("Refreshing…").equals(photoStatus)) return;
+            photoStatus = Ui.tr("Refreshing…");
+            final Context c = getContext().getApplicationContext();
+            new Thread(() -> {
+                DailyPhoto.refresh(c, true);
+                int n = 0;
+                for (String[] p : DailyPhoto.list(c)) if (!p[2].isEmpty()) n++;
+                final String done = n + " " + Ui.tr("photos ready");
+                handler.post(() -> {
+                    photoStatus = done;
+                    invalidate();
+                });
+            }).start();
         }
 
         private void closePicker() {
@@ -930,7 +967,8 @@ public class SettingsActivity extends Activity implements SettingsHost {
         }
 
         private String pickerTitle() {
-            return pickFor == PICK_CITY ? Ui.tr("City") : pickFor == PICK_LANGUAGE ? Ui.tr("Language") : keyLabels()[pickFor - 1];
+            return pickFor == PICK_CITY ? Ui.tr("City") : pickFor == PICK_LANGUAGE ? Ui.tr("Language")
+                    : pickFor == PICK_PHOTO ? Ui.tr("Today's photos") : keyLabels()[pickFor - 1];
         }
 
         // MARK: - List editors (Apps, Side bar, Screensaver)

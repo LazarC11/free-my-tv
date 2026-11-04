@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Continue watching on the home screen: the apps' Watch Next list (granted over ADB in Free My TV mode). -->
     <uses-permission android:name="com.android.providers.tv.permission.READ_EPG_DATA" />
+    <!-- The music's equalizer follows the sound the TV plays (Visualizer on the output mix, never the microphone);
+         granted over ADB in Free My TV mode. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!-- Android 11+: without this list the app can't "see" the other apps (getLeanbackLaunchIntentForPackage
          returns null). The shelf and streaming apps, the live TV apps and, through the <intent>, every TV app
@@ -68,6 +71,10 @@
         android:banner="@drawable/banner"
         android:allowBackup="false"
         android:usesCleartextTraffic="false">
+
+        <!-- TCL's picture service (TvPqManager): told when the side bar's live input preview shows, as TCL's own home
+             screen does (HomeActivity.tclHomeWidget). Only on TCL TVs; elsewhere it isn't there and nothing changes. -->
+        <uses-library android:name="com.tcl.tv.display" android:required="false" />
 
         <!-- The app's icon opens the settings (switch between Free My TV and the original home screen). -->
         <activity

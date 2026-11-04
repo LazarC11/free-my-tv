@@ -281,6 +281,10 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         clockFont = Ui.text(Ui.displayHeavy, 152 * k, WHITE);
         clockInk = new Paint(clockFont);
         clockInk.setTextAlign(Paint.Align.LEFT);
+        previewShade = new LinearGradient(0, 0, w, 0, new int[] {0x8C000000, 0x26000000, 0x00000000},
+                new float[] {0, 0.25f, 0.45f}, Shader.TileMode.CLAMP);
+        previewShadeBottom = new LinearGradient(0, 0, 0, h, new int[] {0x00000000, 0x00000000, 0x80000000},
+                new float[] {0, 0.6f, 1}, Shader.TileMode.CLAMP);
         clockFont.setLetterSpacing(0.013f);
         datePaint = shadowed(paint(Ui.semibold, 26, 0xE6FFFFFF));
         datePaint.setTextAlign(Paint.Align.RIGHT);
@@ -371,8 +375,12 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         // background as soon as the list arrives.
         NetflixHistory.refreshNow(getContext(), () -> handler.post(this::reload));
         final Context c = getContext().getApplicationContext();
+        final String shown = backing == null ? "" : backing.key;
         LOADER.execute(() -> {
-            if (DailyPhoto.refresh(c)) handler.post(() -> rebake(false));
+            // A new batch, or another photo picked in Settings › Background: the background follows.
+            DailyPhoto.Photo p = DailyPhoto.current(c);
+            boolean picked = shown.startsWith("daily:") && p != null && !shown.equals("daily:" + p.file.getName());
+            if (DailyPhoto.refresh(c) || picked) handler.post(() -> rebake(false));
         });
         Videos.download(c, null);
         page.snap(0);
@@ -400,7 +408,69 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         data.removeListener(this);
         recs.removeListener(this);
         nowPlaying.stop();
+        beat.stop();
         if (tvInputs != null) tvInputs.unregisterCallback(inputCallback);
+        // Leaving (an input opened, another app): the preview lets go of the input at once.
+        handler.removeCallbacks(startPreview);
+        previewWanted = null;
+        if (inputPreview != null) inputPreview.preview(null);
+        inputLive.snap(0);
+    }
+
+    // MARK: - Live input preview (the side bar's HDMI inputs)
+
+    /** Plays an HDMI input's live picture and sound behind the home screen (HomeActivity); null stops it. */
+    interface InputPreview {
+        void preview(String inputId);
+    }
+
+    InputPreview inputPreview;
+    private String previewWanted;
+    /** 0 to 1: the input's picture shows instead of the photo (it fades in once its first frame arrives). */
+    private final Spring inputLive = new Spring(0.35f, 1f, 0);
+    private final Runnable startPreview = () -> {
+        if (inputPreview != null && running && previewWanted != null) inputPreview.preview(previewWanted);
+    };
+
+    /**
+     * The side bar's focused input, with a device connected: it plays after a moment there (passing over the inputs
+     * doesn't switch each one on); focus elsewhere stops it.
+     */
+    private void syncPreview() {
+        HomeApps.Item it = zone == Z_RAIL && railIndex < rail.size() ? rail.get(railIndex) : null;
+        String id = it != null && it.kind == HomeApps.INPUT && it.connected ? it.inputId : null;
+        if (id == null ? previewWanted == null : id.equals(previewWanted)) return;
+        previewWanted = id;
+        handler.removeCallbacks(startPreview);
+        if (id != null) {
+            handler.postDelayed(startPreview, 400);
+        } else {
+            if (inputPreview != null) inputPreview.preview(null);
+            inputLive.target = 0;
+            wake();
+        }
+    }
+
+    /** The input's picture arrived (or went): the photo fades out (or back in). */
+    void inputLive(boolean on) {
+        inputLive.target = on && previewWanted != null ? 1 : 0;
+        if (!on) liveClockTint = 0;
+        wake();
+    }
+
+    private int liveClockTint;   // the clock's color from the input's picture behind it (0: not known yet)
+
+    /** The input's picture's average color behind the clock (HomeActivity samples it): the clock follows it. */
+    void liveClockColor(int average) {
+        liveClockTint = 0xFF000000 | mixWhite((average >> 16) & 255) << 16 | mixWhite((average >> 8) & 255) << 8
+                | mixWhite(average & 255);
+        invalidate();
+    }
+
+    /** Where the clock's digits are on the screen (for the sampling). */
+    void clockArea(android.graphics.Rect out) {
+        out.set(Math.round((CLOCK_RIGHT - CLOCK_W) * k), Math.round(CLOCK_TOP * k), Math.round(CLOCK_RIGHT * k),
+                Math.round((CLOCK_TOP + CLOCK_H) * k));
     }
 
     void destroy() {
@@ -432,6 +502,13 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
             recs.refreshIfStale();
             checkNotices();
             updateNetwork();
+            // Past midnight with the home screen open: the new day's photos, at once.
+            final Context app = getContext().getApplicationContext();
+            if (!DailyPhoto.today().equals(DailyPhoto.batchDay(app))) {
+                LOADER.execute(() -> {
+                    if (DailyPhoto.refresh(app)) handler.post(() -> rebake(false));
+                });
+            }
             if (hero != null && System.currentTimeMillis() > heroUntil) {
                 hero = null;
                 if (zone == Z_HERO) zone = Z_SHELF;
@@ -507,12 +584,13 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         String oldArtist = track == null ? "" : ArtistArt.mainArtist(track.artist);
         Bitmap oldArt = track == null ? null : track.art;
         track = t;
-        music.target = has ? 1 : 0;
+        music.target = musicLayout() ? 1 : 0;
         if (has && t.art != coverArt) {
             coverArt = t.art;
             coverShader = t.art == null ? null : new BitmapShader(t.art, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
         }
         updateTrackText();
+        syncBeat();
         handler.removeCallbacks(progressTick);
         if (has && running) handler.postDelayed(progressTick, 1000);
         if (had != has) {
@@ -616,8 +694,20 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
     /** What the shelf shows: the apps, without the one that plays music (it is the big cover then). */
     private void applyShelf() {
         List<HomeApps.Item> list = new ArrayList<>();
-        String playing = track != null ? track.pkg : null;
+        String playing = musicLayout() ? track.pkg : null;
+        shelfInMusicLayout = musicLayout();
         for (HomeApps.Item it : apps) if (playing == null || !playing.equals(it.pkg)) list.add(it);
+        // Music plays but the page is scrolled down: the playing app's tile (the cover gone back into it) leads the
+        // shelf, with an equalizer in it (drawTile).
+        if (track != null && playing == null && track.pkg != null) {
+            HomeApps.Item player = null;
+            for (HomeApps.Item it : list) if (track.pkg.equals(it.pkg)) player = it;
+            if (player == null) for (HomeApps.Item it : grid) if (track.pkg.equals(it.pkg)) player = it;
+            if (player != null) {
+                list.remove(player);
+                list.add(0, player);
+            }
+        }
         String focusedKey = shelfIndex < shelf.size() ? shelf.get(shelfIndex).key : null;
         Spring[] focus = new Spring[list.size()], slide = new Spring[list.size()];
         for (int i = 0; i < list.size(); i++) {
@@ -796,34 +886,61 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         final WatchNext.Entry e = hero;
         final boolean ownPhotos = "mine".equals(Prefs.background()), artistPhoto = !"album".equals(Prefs.musicBackground());
         final float kk = bw / 1920f;
-        IMAGES.execute(() -> {
+        // Its own worker: a background never waits behind the cards' and the apps' pictures.
+        BAKE.execute(() -> {
             Backing b = null;
             try {
                 if (t != null) b = bakeMusic(c, t, artistPhoto, bw, bh);
                 if (b == null && e != null) b = bakeHero(c, e, bw, bh, kk);
-                if (b == null) b = bakePhoto(c, ownPhotos, bw, bh);
+                if (b == null) b = bakePhoto(c, ownPhotos, null, bw, bh);
             } catch (RuntimeException | OutOfMemoryError ex) {
                 AppLog.w("background: " + ex.getMessage());
             }
-            final Backing ready = b;
-            handler.post(() -> {
-                if (gen != bakeGeneration || ready == null) return;
-                Backing now = incoming != null ? incoming : backing;
-                if (now != null && ready.key.equals(now.key) && !first) return;
-                if (backing == null || first) {
-                    backing = ready;
-                    incoming = null;
-                } else {
-                    if (incoming != null) backing = incoming;
-                    incoming = ready;
-                    fadeAt = SystemClock.uptimeMillis();
-                }
-                wake();
-            });
+            show(b, gen, first);
         });
     }
 
-    private Backing bakePhoto(Context c, boolean own, int bw, int bh) {
+    /** A background made in the background shows (fading in over the one before). */
+    private void show(final Backing ready, final int gen, final boolean first) {
+        handler.post(() -> {
+            if (gen != bakeGeneration || ready == null) return;
+            Backing now = incoming != null ? incoming : backing;
+            if (now != null && ready.key.equals(now.key) && !first) return;
+            if (backing == null || first) {
+                backing = ready;
+                incoming = null;
+            } else {
+                if (incoming != null) backing = incoming;
+                incoming = ready;
+                fadeAt = SystemClock.uptimeMillis();
+            }
+            wake();
+            if (ready.key.startsWith("daily:")) prepareNextPhoto();
+        });
+    }
+
+    private static final ExecutorService BAKE = Executors.newSingleThreadExecutor();
+    private Backing nextPhoto;   // the next photo of the day, made ahead so "another photo" shows it at once
+
+    private void prepareNextPhoto() {
+        if (w == 0) return;
+        final Context c = getContext().getApplicationContext();
+        final int bw = w, bh = h;
+        BAKE.execute(() -> {
+            DailyPhoto.Photo p = DailyPhoto.peek(c, 1);
+            Backing b = null;
+            try {
+                if (p != null) b = bakePhoto(c, false, p, bw, bh);
+            } catch (RuntimeException | OutOfMemoryError ex) {
+                AppLog.w("next photo: " + ex.getMessage());
+            }
+            final Backing ready = b;
+            handler.post(() -> nextPhoto = ready);
+        });
+    }
+
+    /** `pick`: that photo of the day (made ahead); null: the one to show now. */
+    private Backing bakePhoto(Context c, boolean own, DailyPhoto.Photo pick, int bw, int bh) {
         Backing b = new Backing();
         File f = null;
         if (own) {
@@ -834,7 +951,7 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
             }
         }
         if (f == null) {
-            DailyPhoto.Photo p = DailyPhoto.current(c);
+            DailyPhoto.Photo p = pick != null ? pick : DailyPhoto.current(c);
             if (p != null) {
                 f = p.file;
                 b.key = "daily:" + f.getName();
@@ -901,8 +1018,8 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
     }
 
     /**
-     * The artist's photo (or, until it's saved, the album cover) on black, the left side fading to black for the
-     * text. Only a photo already saved: a new artist shows the cover at once while the photo downloads (fetchArtist),
+     * The artist's photo (or, until it's saved, the album cover), sharp on the right, melting into a blurred copy of
+     * itself on the left where the cover and the song sit. Only a photo already saved: a new artist shows the cover at once while the photo downloads (fetchArtist),
      * then fades to it. A wide photo fills the screen; a square one (or the cover) stands at full height on the right,
      * never zoomed in.
      */
@@ -920,31 +1037,37 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         } else {
             return null;
         }
-        Bitmap soft = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
-        soft.eraseColor(0xFF000000);
-        Canvas cv = new Canvas(soft);
+        // Under everything: the same picture filling the screen, smoothly blurred and a little darkened.
         Paint filter = new Paint(Paint.FILTER_BITMAP_FLAG);
-        float pw = photo.getWidth() * (bh / (float) photo.getHeight());
-        if (pw >= bw) {
-            // Wide (TheAudioDB): fills the screen, cut only at the sides.
-            float left = (bw - pw) / 2;
-            cv.drawBitmap(photo, null, new RectF(left, 0, left + pw, bh), filter);
-        } else {
-            // Square (Deezer, the cover): full height on the right, its left edge fading into the black.
-            Bitmap layer = Bitmap.createBitmap(Math.round(pw), bh, Bitmap.Config.ARGB_8888);
-            Canvas lc = new Canvas(layer);
-            lc.drawBitmap(photo, null, new RectF(0, 0, pw, bh), filter);
-            Paint mask = new Paint();
-            mask.setShader(new LinearGradient(0, 0, pw * 0.45f, 0, 0x00000000, 0xFF000000, Shader.TileMode.CLAMP));
-            mask.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN));
-            lc.drawRect(0, 0, pw * 0.45f, bh, mask);
-            cv.drawBitmap(layer, bw - pw, 0, null);
-            layer.recycle();
-        }
+        float cover = Math.max(bw / (float) photo.getWidth(), bh / (float) photo.getHeight());
+        Bitmap filled = Bitmap.createBitmap(bw / 4, bh / 4, Bitmap.Config.ARGB_8888);
+        float fw = photo.getWidth() * cover / 4, fh = photo.getHeight() * cover / 4;
+        new Canvas(filled).drawBitmap(photo, null, new RectF((bw / 4f - fw) / 2, (bh / 4f - fh) / 2,
+                (bw / 4f + fw) / 2, (bh / 4f + fh) / 2), filter);
+        Bitmap blurred = Blur.soft(filled, bw / 8, bh / 8, 6);
+        filled.recycle();
+        Bitmap soft = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
+        Canvas cv = new Canvas(soft);
+        Paint dim = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
+        dim.setColorFilter(new android.graphics.LightingColorFilter(0xB3B3B3, 0));   // 70% bright
+        cv.drawBitmap(blurred, null, new RectF(0, 0, bw, bh), dim);
+        // The picture itself, sharp on the right, its left part melting into the blur.
+        float pw = photo.getWidth() * (bh / (float) photo.getHeight()), left = pw >= bw ? (bw - pw) / 2 : bw - pw;
+        Bitmap layer = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
+        Canvas lc = new Canvas(layer);
+        lc.drawBitmap(photo, null, new RectF(left, 0, left + pw, bh), filter);
+        float from = Math.max(0, left), to = from + (bw - from) * 0.5f;
+        Paint mask = new Paint();
+        mask.setShader(new LinearGradient(from, 0, to, 0, 0x00000000, 0xFF000000, Shader.TileMode.CLAMP));
+        mask.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN));
+        lc.drawRect(0, 0, to, bh, mask);
+        cv.drawBitmap(layer, 0, 0, null);
+        layer.recycle();
+        blurred.recycle();
         if (own) photo.recycle();
         Paint p = new Paint(Paint.DITHER_FLAG);
-        // The left side to almost black (the cover and the song sit there), as for a show.
-        p.setShader(new LinearGradient(0, 0, bw, 0, new int[] {0xF2000000, 0xD9000000, 0x59000000, 0x00000000},
+        // A light darkening on the left, only enough for the song's text to read on the blur.
+        p.setShader(new LinearGradient(0, 0, bw, 0, new int[] {0x8C000000, 0x59000000, 0x1A000000, 0x00000000},
                 new float[] {0, 0.3f, 0.55f, 0.75f}, Shader.TileMode.CLAMP));
         cv.drawRect(0, 0, bw, bh, p);
         p.setShader(new LinearGradient(0, 0, 0, bh, new int[] {0x4D000000, 0x00000000, 0x40000000, 0xD9000000},
@@ -1139,6 +1262,7 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         m |= page.step(dt);
         m |= music.step(dt);
         m |= lift.step(dt);
+        m |= inputLive.step(dt);
         return m;
     }
 
@@ -1150,20 +1274,25 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         for (int i = 0; i < gridFocus.length; i++) gridFocus[i].target = zone == Z_GRID && gridIndex == i ? 1 : 0;
         for (int i = 0; i < musicFocus.length; i++) musicFocus[i].target = zone == Z_MUSIC && musicIndex == i ? 1 : 0;
         railOpen.target = zone == Z_RAIL || zone == Z_CAPTION ? 1 : 0;   // the photo row is part of the open bar
+        syncPreview();
         // The shelf: where the bar is, how many apps fit, and the window of apps shown.
+        // Music layout only on the first page: scrolled down to the rows, the cover goes back into its app's tile on the
+        // shelf, which centers again.
+        boolean musicLayout = musicLayout();
+        music.target = musicLayout ? 1 : 0;
+        if (musicLayout != shelfInMusicLayout) {
+            shelfInMusicLayout = musicLayout;
+            applyShelf();   // (it calls retarget again)
+            return;
+        }
         float left, right;
-        if (track != null) {
-            // Beside the cover: as wide as its apps, up to the right edge.
-            float max = MUSIC_DOCK_RIGHT - MUSIC_DOCK_LEFT;
-            int fit = Math.max(1, (int) Math.floor((max - 2 * MUSIC_PAD + MUSIC_GAP) / (TILE + MUSIC_GAP)));
-            int n = Math.max(1, shelf.size());
-            float dw = n > fit ? max : n * TILE + (n - 1) * MUSIC_GAP + 2 * MUSIC_PAD;
+        if (musicLayout) {
+            // Beside the cover: as wide as the apps it shows (and the dots), never wider.
+            float dw = dockWidth(MUSIC_DOCK_RIGHT - MUSIC_DOCK_LEFT, MUSIC_GAP, MUSIC_PAD);
             left = MUSIC_DOCK_LEFT * k;
             right = (MUSIC_DOCK_LEFT + dw) * k;
         } else {
-            int fit = Math.max(1, (int) Math.floor((1640 - 2 * PAD + GAP) / (TILE + GAP)));
-            int n = Math.max(1, Math.min(shelf.size(), fit));
-            float dw = (n * TILE + (n - 1) * GAP + 2 * PAD) * k;
+            float dw = dockWidth(1640, GAP, PAD) * k;
             left = (w - dw) / 2f;
             right = left + dw;
         }
@@ -1186,9 +1315,29 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         wake();
     }
 
+    /**
+     * The shelf's width (1080p pixels) within `max`: every app when they fit; else as many as fit with a dots margin
+     * at each end (DOTS), and not a pixel more (no empty space after the last app).
+     */
+    private float dockWidth(float max, float gap, float pad) {
+        int n = Math.max(1, shelf.size());
+        int fit = Math.max(1, (int) Math.floor((max - 2 * pad + gap) / (TILE + gap)));
+        if (n <= fit) return n * TILE + (n - 1) * gap + 2 * pad;
+        int s = Math.max(1, (int) Math.floor((max - 2 * pad - 2 * DOTS + gap) / (TILE + gap)));
+        return s * TILE + (s - 1) * gap + 2 * pad + 2 * DOTS;
+    }
+
+    /** Music plays and the page is at the top: the big cover beside a shorter shelf. */
+    private boolean musicLayout() {
+        return track != null && zone != Z_ROW && zone != Z_GRID;
+    }
+
+    private boolean shelfInMusicLayout;   // what applyShelf last made the shelf for
+
     /** How many apps the shelf shows at once (with room for the dots when some don't fit). */
     private int slots() {
-        float gap = track != null ? MUSIC_GAP : GAP, pad = track != null ? MUSIC_PAD : PAD;
+        boolean ml = musicLayout();
+        float gap = ml ? MUSIC_GAP : GAP, pad = ml ? MUSIC_PAD : PAD;
         float width = (dockRight.target - dockLeft.target) / Math.max(1e-3f, k);
         // + 0.01: a bar made exactly n tiles wide must not round down to n - 1.
         int n = Math.max(1, (int) Math.floor((width - 2 * pad + gap) / (TILE + gap) + 0.01f));
@@ -1248,6 +1397,30 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
 
     private void drawBackground(Canvas c, float gone) {
         dst.set(0, 0, w, h);
+        float live = Ui.clamp(inputLive.value);
+        if (live > 0.001f) {
+            // An input plays behind (HomeActivity's TvView): the photo fades out over it, and a soft shade on the left
+            // and at the bottom keeps the side bar and the shelf readable.
+            if (live < 0.999f) {
+                int save = c.saveLayerAlpha(0, 0, w, h, Math.round(255 * (1 - live)));
+                drawPhotoBackground(c, gone);
+                c.restoreToCount(save);
+            }
+            fill.setShader(previewShade);
+            fill.setAlpha(Math.round(255 * live));
+            c.drawRect(0, 0, w, h, fill);
+            fill.setShader(previewShadeBottom);
+            c.drawRect(0, 0, w, h, fill);
+            fill.setShader(null);
+            fill.setAlpha(255);
+            return;
+        }
+        drawPhotoBackground(c, gone);
+    }
+
+    private Shader previewShade, previewShadeBottom;   // made with the size (onSizeChanged)
+
+    private void drawPhotoBackground(Canvas c, float gone) {
         if (backing == null) {
             c.drawColor(0xFF0B0C10);
         } else {
@@ -1290,7 +1463,10 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
     private void drawClock(Canvas c, float alpha) {
         // Plain, see-through digits in the background's own color (made light), right-aligned.
         Backing b = incoming != null ? incoming : backing;
-        clockInk.setColor(b == null ? WHITE : b.clockTint);
+        int tint = b == null ? WHITE : b.clockTint;
+        // An input playing behind: its picture's color there, as it fades in.
+        if (liveClockTint != 0) tint = blend(tint, liveClockTint, Ui.clamp(inputLive.value));
+        clockInk.setColor(tint);
         clockInk.setAlpha(Math.round(0xC7 * alpha));
         c.drawText(clockText, CLOCK_RIGHT * k - 6 * k - clockInk.measureText(clockText), (CLOCK_TOP + CLOCK_BASE) * k, clockInk);
         int dateA = datePaint.getAlpha();
@@ -1621,14 +1797,27 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         fill.setShader(null);
         fill.setColor(Ui.alpha(0xFF1ED760, alpha));
         float[] heights = {10, 18, 7, 14};
-        long now = SystemClock.uptimeMillis();
         for (int i = 0; i < 4; i++) {
-            float hh = heights[i] * k;
-            if (playing) hh *= 0.6f + 0.4f * (float) Math.abs(Math.sin(now / (260.0 + i * 70) + i));
+            float hh = barHeight(i, 18 * k, heights[i] * k, playing);
             rect.set(x + i * 9 * k, base - hh, x + i * 9 * k + 5 * k, base);
             c.drawRoundRect(rect, 2 * k, 2 * k, fill);
         }
-        if (playing && running && !framing) postInvalidateDelayed(100);
+        if (playing && running && !framing) postInvalidateDelayed(beat.live() ? 40 : 100);
+    }
+
+    /** The equalizer: the music's own bands (Beat) while sound is heard; else a gentle wave (still while paused). */
+    private final Beat beat = new Beat(4);
+
+    /** Bar `i`'s height: up to `max` with the sound, else around `rest`. */
+    private float barHeight(int i, float max, float rest, boolean playing) {
+        if (!playing) return rest;
+        if (beat.live()) return max * (0.15f + 0.85f * beat.level(i));
+        return rest * (0.6f + 0.4f * (float) Math.abs(Math.sin(SystemClock.uptimeMillis() / (260.0 + i * 70) + i)));
+    }
+
+    /** Listening only while music plays and the home screen shows. */
+    private void syncBeat() {
+        if (running && track != null && track.playing) beat.start(); else beat.stop();
     }
 
     private void drawControl(Canvas c, float cx, float cy, float r, String what, int index, float alpha) {
@@ -1690,19 +1879,27 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         float size = TILE * k, step = size + gap, tileTop = top + (DOCK_H * k - size) / 2;
         int slots = slots();
         boolean dotsLeft = shelfFirst > 0, dotsRight = shelfFirst + slots < shelf.size();
-        float x0 = left + pad + (dotsLeft ? DOTS * k : 0) - (shelfScroll.value - shelfFirst) * step;
+        // When some don't fit, the shelf keeps a dots margin at both ends (dockWidth): the apps sit between them.
+        boolean overflow = shelf.size() > slots;
+        float x0 = left + pad + (overflow ? DOTS * k : 0) - (shelfScroll.value - shelfFirst) * step;
+        float dotL = left + pad + 25 * k, dotR = right - pad - 25 * k, cy = tileTop + size / 2;
         int save = c.save();
-        c.clipRect(left + pad - 40 * k + (dotsLeft ? DOTS * k : 0), top - 80 * k,
-                right - pad + 40 * k - (dotsRight ? DOTS * k : 0), top + DOCK_H * k + 80 * k);
+        c.clipRect(left, top - 80 * k, right, top + DOCK_H * k + 80 * k);
         int focused = -1;
         for (int i = 0; i < shelf.size(); i++) {
             float x = x0 + (i - shelfFirst) * step + tileSlide[i].value;
-            if (x > right || x + size < left) continue;
             if (zone == Z_SHELF && i == shelfIndex) {
                 focused = i;
                 continue;
             }
-            drawTile(c, i, x, tileTop, size);
+            // Past the shown ones, an app shrinks into the dots at that end (and grows back out as the shelf moves).
+            float p = i - shelfScroll.value, out = p < 0 ? -p : p - (slots - 1);
+            float s = Ui.clamp(1 - Math.max(0, out));
+            if (s <= 0.02f) continue;
+            float cx = x + size / 2;
+            if (s < 1) cx = (p < 0 ? dotL : dotR) + (cx - (p < 0 ? dotL : dotR)) * s;
+            float ss = size * s;
+            drawTile(c, i, cx - ss / 2, cy - ss / 2, ss);
         }
         c.restoreToCount(save);
         if (focused >= 0) drawTile(c, focused, x0 + (focused - shelfFirst) * step + tileSlide[focused].value, tileTop, size);
@@ -1731,8 +1928,9 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         float half = size * grow / 2;
         rect.set(cx - half, cy - half, cx + half, cy + half);
         drawSoftShadow(c, rect, 0.5f + 0.5f * f);
-        float radius = TILE_R * k * grow;
+        float radius = TILE_R * k * grow * (size / (TILE * k));   // smaller tiles (shrinking into the dots), smaller corners
         drawSquare(c, it, rect, radius, 1);
+        if (track != null && !musicLayout() && track.pkg != null && track.pkg.equals(it.pkg)) drawTileEqualizer(c, rect, radius);
         ring.setStrokeWidth(Math.max(1, 1.5f * k));
         ring.setColor(0x24FFFFFF);
         c.drawRoundRect(rect, radius, radius, ring);
@@ -1744,6 +1942,24 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
             rect.inset(-o, -o);
             c.drawRoundRect(rect, radius + o, radius + o, ring);
         }
+    }
+
+    /** The playing app's tile while the page is scrolled: dimmed, an equalizer in its middle (still while paused). */
+    private void drawTileEqualizer(Canvas c, RectF r, float radius) {
+        fill.setShader(null);
+        fill.setColor(0x99000000);
+        c.drawRoundRect(r, radius, radius, fill);
+        fill.setColor(0xFF1ED760);
+        float s = r.width() / (TILE * k);
+        float[] heights = {34, 58, 26, 46};
+        float bw = 12 * k * s, gap = 9 * k * s, total = 4 * bw + 3 * gap;
+        float x = r.centerX() - total / 2, base = r.centerY() + 30 * k * s;
+        for (int i = 0; i < 4; i++) {
+            float hh = barHeight(i, 64 * k * s, heights[i] * k * s, track.playing);
+            rect2.set(x + i * (bw + gap), base - hh, x + i * (bw + gap) + bw, base);
+            c.drawRoundRect(rect2, bw / 2, bw / 2, fill);
+        }
+        if (track.playing && running && !framing) postInvalidateDelayed(beat.live() ? 40 : 80);
     }
 
     /** The shine: a band of light sweeping across a focused tile or the cover. */
@@ -2184,9 +2400,15 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
     private void anotherPhoto(int dir) {
         click.move();
         final Context c = getContext().getApplicationContext();
+        final Backing ready = dir > 0 ? nextPhoto : null;
+        nextPhoto = null;
         LOADER.execute(() -> {
             DailyPhoto.next(c, dir);
-            handler.post(() -> rebake(false));
+            // Made ahead: it shows at once; else made now.
+            handler.post(() -> {
+                if (ready != null) show(ready, ++bakeGeneration, false);
+                else rebake(false);
+            });
         });
     }
 
@@ -2512,8 +2734,8 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
                 r.set(RAIL_X * k, (RAIL_CY - 200 + i * 62) * k, (RAIL_X + RAIL_W) * k, (RAIL_CY - 144 + i * 62) * k);
                 break;
             case Z_SHELF: {
-                float gap = track != null ? MUSIC_GAP : GAP, pad = track != null ? MUSIC_PAD : PAD;
-                float x = dockLeft.value + pad * k + (shelfFirst > 0 ? DOTS * k : 0) + (i - shelfFirst) * (TILE + gap) * k;
+                float gap = musicLayout() ? MUSIC_GAP : GAP, pad = musicLayout() ? MUSIC_PAD : PAD;
+                float x = dockLeft.value + pad * k + (shelf.size() > slots() ? DOTS * k : 0) + (i - shelfFirst) * (TILE + gap) * k;
                 float top = DOCK_TOP * k + (DOCK_H - TILE) * k / 2 - scroll;
                 r.set(x, top, x + TILE * k, top + TILE * k);
                 break;

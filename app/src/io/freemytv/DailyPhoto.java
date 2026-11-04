@@ -21,9 +21,9 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * The home screen's photo of the day: Bing's (a landscape in 4K, 3840×2160, with its title and place), the last 8 days,
- * fetched once a day. Today's is the first; "Another photo today" moves to the next of those 8, for today only.
- * The images are saved in the app's cache, so the home screen opens with one even offline.
+ * The home screen's photos of the day: a new batch every day, today's photo from Bing's regions (landscapes in 4K,
+ * 3840×2160), fetched just after midnight. The first shows; "Another photo" moves to the next of today's, for today
+ * only. The images are saved in the app's cache, so the home screen opens with one even offline.
  */
 final class DailyPhoto {
     private DailyPhoto() {}
@@ -39,8 +39,17 @@ final class DailyPhoto {
         }
     }
 
-    private static final String FEED = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=8&mkt=en-US";
-    private static final long EVERY = 3 * 3600_000L;
+    /**
+     * A fresh batch every day: today's photo of Bing's regions (they usually differ; Europe's change at about our
+     * midnight, the others through the day). Their feed, newest first: idx=0, n=1 is the region's photo of the day.
+     */
+    private static final String FEED = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=8&mkt=";
+    /** Photos in a day's batch: today's from every region first, then the last days' (regions often share one). */
+    private static final int BATCH = 16;
+    private static final String[] MARKETS = {"en-GB", "de-DE", "fr-FR", "it-IT", "es-ES", "en-US", "ja-JP", "en-IN",
+            "en-CA", "en-AU", "pt-BR", "zh-CN", "nl-NL", "sv-SE"};
+    /** Within a day, looked at again every 2 hours (regions further west change later). */
+    private static final long EVERY = 2 * 3600_000L;
 
     private static SharedPreferences sp(Context c) {
         return c.getSharedPreferences("daily-photo", Context.MODE_PRIVATE);
@@ -50,8 +59,13 @@ final class DailyPhoto {
         return new File(c.getCacheDir(), "daily");
     }
 
-    private static String today() {
+    static String today() {
         return new SimpleDateFormat("yyyyMMdd", Locale.US).format(new Date());
+    }
+
+    /** The day of the batch on the TV ("" before the first). */
+    static String batchDay(Context c) {
+        return sp(c).getString("day", "");
     }
 
     /** The feed's entries as {title, place, url, file name}, the newest first (empty before the first fetch). */
@@ -81,6 +95,38 @@ final class DailyPhoto {
         return null;
     }
 
+    /** Today's photos as {title, place, "1" if on the TV}, in order (Settings › Background › Today's photos). */
+    static List<String[]> list(Context c) {
+        List<String[]> out = new ArrayList<>();
+        for (String[] e : entries(c)) out.add(new String[] {e[0], e[1], new File(dir(c), e[3]).isFile() ? "1" : ""});
+        return out;
+    }
+
+    /** The batch's photo shown now (its index in list()). */
+    static int picked(Context c) {
+        return sp(c).getString("pickDay", "").equals(today()) ? sp(c).getInt("pick", 0) : 0;
+    }
+
+    /** Shows photo `i` of the batch today (if it's on the TV). */
+    static void choose(Context c, int i) {
+        List<String[]> all = entries(c);
+        if (i < 0 || i >= all.size() || !new File(dir(c), all.get(i)[3]).isFile()) return;
+        sp(c).edit().putString("pickDay", today()).putInt("pick", i).apply();
+    }
+
+    /** The photo `step` after the one shown (on the TV), without choosing it: to prepare it ahead. */
+    static Photo peek(Context c, int step) {
+        List<String[]> all = entries(c);
+        if (all.isEmpty()) return null;
+        int pick = picked(c);
+        for (int n = 1; n <= all.size(); n++) {
+            String[] e = all.get(Math.floorMod(pick + step * n, all.size()));
+            File f = new File(dir(c), e[3]);
+            if (f.isFile()) return new Photo(e[0], e[1], f);
+        }
+        return null;
+    }
+
     /** "Another photo today": the next of the last 8 days' photos that is on the TV. */
     static void next(Context c, int dir) {
         List<String[]> all = entries(c);
@@ -96,30 +142,55 @@ final class DailyPhoto {
         }
     }
 
-    /** Fetches the feed and the images not on the TV yet (at most every 3 hours). Background thread. */
+    /**
+     * Fetches today's batch and the images not on the TV yet: at once on a new day (just after midnight), else at
+     * most every 2 hours. Returns true if the photo to show changed. Background thread.
+     */
     static boolean refresh(Context c) {
+        return refresh(c, false);
+    }
+
+    /** `force`: now, whatever the time of the last look (Settings › Background › Refresh photos). */
+    static synchronized boolean refresh(Context c, boolean force) {
         SharedPreferences p = sp(c);
         long now = System.currentTimeMillis(), at = p.getLong("at", 0);
-        if (now - at < EVERY && now >= at && !entries(c).isEmpty()) return false;
+        boolean newDay = !today().equals(p.getString("day", ""));
+        if (!force && !newDay && now - at < EVERY && now >= at && !entries(c).isEmpty()) return false;
         try {
-            JSONObject feed = new JSONObject(new String(get(FEED), StandardCharsets.UTF_8));
-            JSONArray images = feed.getJSONArray("images"), out = new JSONArray();
+            JSONArray out = new JSONArray();
             File d = dir(c);
             if (!d.isDirectory() && !d.mkdirs()) return false;
             List<String> keep = new ArrayList<>();
-            for (int i = 0; i < images.length(); i++) {
-                JSONObject img = images.getJSONObject(i);
-                String base = img.optString("urlbase");
-                if (base.isEmpty()) continue;
-                String name = base.replaceAll("[^A-Za-z0-9_.-]", "") + ".jpg";
-                String copyright = img.optString("copyright");
-                int paren = copyright.indexOf(" (©");
-                String place = paren > 0 ? copyright.substring(0, paren) : copyright;
-                out.put(new JSONObject().put("title", img.optString("title", place)).put("place", place)
-                        .put("url", "https://www.bing.com" + base + "_UHD.jpg").put("file", name));
-                keep.add(name);
+            // Every region's last 8 days, newest first; the batch takes today's of all of them, then yesterday's...
+            List<JSONArray> feeds = new ArrayList<>();
+            for (String market : MARKETS) {
+                try {
+                    feeds.add(new JSONObject(new String(get(FEED + market), StandardCharsets.UTF_8)).getJSONArray("images"));
+                } catch (Exception e) {
+                    // one region down: the others still make the batch
+                }
             }
-            p.edit().putString("feed", out.toString()).putLong("at", now).apply();
+            for (int day = 0; day < 8 && keep.size() < BATCH; day++) {
+                for (JSONArray images : feeds) {
+                    if (day >= images.length() || keep.size() >= BATCH) continue;
+                    JSONObject img = images.getJSONObject(day);
+                    String base = img.optString("urlbase");
+                    if (base.isEmpty()) continue;
+                    // The same photo in several regions has one name (its OHR id, before the region's suffix).
+                    String id = base.replaceAll("^.*OHR\\.", "").replaceAll("_[A-Z]{2}-[A-Z]{2}\\d*$", "");
+                    String name = id.replaceAll("[^A-Za-z0-9_.-]", "") + ".jpg";
+                    if (keep.contains(name)) continue;
+                    String copyright = img.optString("copyright");
+                    int paren = copyright.indexOf(" (©");
+                    String place = paren > 0 ? copyright.substring(0, paren) : copyright;
+                    out.put(new JSONObject().put("title", img.optString("title", place)).put("place", place)
+                            .put("url", "https://www.bing.com" + base + "_UHD.jpg").put("file", name));
+                    keep.add(name);
+                }
+            }
+            if (out.length() == 0) return false;
+            boolean changed = newDay || out.length() != entries(c).size();
+            p.edit().putString("feed", out.toString()).putLong("at", now).putString("day", today()).apply();
             boolean any = false;
             for (String[] e : entries(c)) {
                 File f = new File(d, e[3]);
@@ -137,7 +208,7 @@ final class DailyPhoto {
             }
             File[] old = d.listFiles();
             if (old != null) for (File f : old) if (!keep.contains(f.getName())) f.delete();
-            return any;
+            return any || changed;
         } catch (Exception e) {
             AppLog.w("daily photo feed: " + e.getMessage());
             return false;

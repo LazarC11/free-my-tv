@@ -290,6 +290,8 @@ final class HomeMode {
         try {
             adb.shell("cmd notification " + (on ? "allow_listener " : "disallow_listener ") + MEDIA_LISTENER);
             adb.shell("pm " + (on ? "grant " : "revoke ") + PKG + " " + WatchNext.PERMISSION);
+            // The music's equalizer reads the sound the TV plays (Beat: the output mix, not the microphone).
+            adb.shell("pm " + (on ? "grant " : "revoke ") + PKG + " android.permission.RECORD_AUDIO");
         } catch (IOException e) {
             AppLog.w("home extras: " + e.getMessage());
         }
