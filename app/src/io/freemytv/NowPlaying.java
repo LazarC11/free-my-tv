@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSessionManager;
@@ -13,7 +14,13 @@ import android.media.session.PlaybackState;
 import android.os.Handler;
 import android.os.SystemClock;
 
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * What's playing now (music, a podcast) for the home screen's card: the media session of any app that is playing.
@@ -49,6 +56,12 @@ final class NowPlaying {
     private MediaController controller;
     private Track track;
     private boolean running;
+    // Sharp covers by web address (Spotify's at 640 px), the last few songs; the one downloading now.
+    private static final ExecutorService COVERS = Executors.newSingleThreadExecutor();
+    private final Map<String, Bitmap> covers = new LinkedHashMap<String, Bitmap>(16, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, Bitmap> e) { return size() > 12; }
+    };
+    private final Set<String> downloading = new HashSet<>();
 
     private final MediaSessionManager.OnActiveSessionsChangedListener sessions = list -> pick(list);
 
@@ -175,6 +188,8 @@ final class NowPlaying {
             handler.post(() -> pick(null));
         }
         if (controller != null) next = read(controller);
+        // Videos (YouTube, Stremio…) are Continue watching's (VideoHistory), not the music card.
+        if (next != null && VideoHistory.isVideo(next.pkg, next.art)) next = null;
         if (same(track, next)) {
             if (track != null && next != null) {
                 boolean changed = track.playing != next.playing;
@@ -203,6 +218,17 @@ final class NowPlaying {
             t.art = md.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART);
             if (t.art == null) t.art = md.getBitmap(MediaMetadata.METADATA_KEY_ART);
             if (t.art == null) t.art = md.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON);
+            // Apps send a new song's title first and its picture a moment later (Spotify): the cover follows its
+            // web address instead, downloaded sharp; until it arrives, the app's picture (or the last cover) stays.
+            String url = artUrl(first(md, MediaMetadata.METADATA_KEY_ALBUM_ART_URI, MediaMetadata.METADATA_KEY_ART_URI));
+            if (url != null) {
+                Bitmap sharp = covers.get(url);
+                if (sharp != null) t.art = sharp;
+                else {
+                    if (t.art == null && track != null) t.art = track.art;
+                    download(url);
+                }
+            }
         }
         PlaybackState s = m.getPlaybackState();
         if (s != null && s.getPosition() >= 0) {
@@ -220,6 +246,40 @@ final class NowPlaying {
         }
         if (t.title.isEmpty()) t.title = t.app;
         return t;
+    }
+
+    /** Downloads a cover once (in the background), then reads the session again so the card takes it. */
+    private void download(String url) {
+        if (!downloading.add(url)) return;
+        COVERS.execute(() -> {
+            Bitmap b = null;
+            try {
+                byte[] bytes = DailyPhoto.get(url);
+                b = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+            } catch (Exception e) {
+                AppLog.w("cover: " + e.getMessage());
+            }
+            final Bitmap got = b;
+            handler.post(() -> {
+                downloading.remove(url);
+                if (got == null) return;
+                covers.put(url, got);
+                if (running) refresh();
+            });
+        });
+    }
+
+    /** Where to download the cover: web addresses as they are, Spotify's own (spotify:image:…) at 640 px; or null. */
+    static String artUrl(String uri) {
+        if (uri == null || uri.isEmpty()) return null;
+        if (uri.startsWith("https://") || uri.startsWith("http://")) return uri;
+        if (uri.startsWith("spotify:image:")) {
+            String id = uri.substring("spotify:image:".length());
+            // Album covers: ab67616d + size (00004851 = 64, 00001e02 = 300, 0000b273 = 640) + the image's own ID
+            if (id.startsWith("ab67616d") && id.length() > 16) id = "ab67616d0000b273" + id.substring(16);
+            return "https://i.scdn.co/image/" + id;
+        }
+        return null;
     }
 
     private static String first(MediaMetadata md, String... keys) {

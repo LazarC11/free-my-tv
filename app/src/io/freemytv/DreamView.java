@@ -25,14 +25,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * The screensaver: real footage. The video clips (Videos: a fireplace, an aquarium... sent from a computer or
- * downloaded from config.properties) play muted and full screen, a new one every 10 minutes with a fade through
- * black; without clips, the photos (your own, else the picks' images) with a slow zoom and a crossfade every 20 s.
+ * The screensaver: real footage. The video clips (Videos: 4K flyovers, an aquarium, rain... sent from a computer or
+ * downloaded) play muted and full screen, each looping for 5 minutes, then the next with a fade through black;
+ * without clips (until the first one has downloaded), the photos (your own, else the picks' images) with a slow zoom and a crossfade every 20 s.
  * Bottom right, a small clock with the date and the weather, moved a few pixels every minute so nothing stays put
  * on the panel. Any key exits (the system's screensaver does that).
  */
 final class DreamView extends FrameLayout implements Choreographer.FrameCallback, HomeData.Listener {
-    private static final long CLIP_MS = 10 * 60_000L, FADE_MS = 1200, PHOTO_MS = 20_000, PHOTO_FADE = 2500;
+    private static final long CLIP_MS = 5 * 60_000L, FADE_MS = 1200, PHOTO_MS = 20_000, PHOTO_FADE = 2500;
     private static final float ZOOM = 0.08f;
     /** Where the rotation is, across screensavers: the next one starts on another clip or photo. */
     private static int nextClip, nextPhoto;
@@ -148,7 +148,8 @@ final class DreamView extends FrameLayout implements Choreographer.FrameCallback
             mp.setDataSource(f.getPath());
             mp.setSurface(surface);
             mp.setVolume(0, 0);
-            mp.setLooping(clips.size() == 1);
+            // Each scene loops seamlessly while it shows (5 minutes), then fades to the next.
+            mp.setLooping(true);
             mp.setOnPreparedListener(p -> {
                 if (gen != generation || p != player) return;
                 videoW = p.getVideoWidth();

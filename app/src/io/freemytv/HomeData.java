@@ -446,6 +446,7 @@ final class HomeData {
     }
 
     static String hour(long at) {
+        if (Ui.hour24) return Ui.once("hour24", at, () -> new java.text.SimpleDateFormat("H:00", Ui.locale()).format(new java.util.Date(at)));
         return Ui.once("hour", at, () -> Ui.datePattern("format|h a").format(at));
     }
 

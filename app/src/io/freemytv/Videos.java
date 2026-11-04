@@ -37,32 +37,37 @@ final class Videos {
     private static volatile long failedAt;
 
     /**
-     * The built-in scenes: real footage from Mixkit (free to use, no credit needed), as {key, name, link}. Settings ›
-     * Screensaver scenes picks which ones the TV downloads and plays, in that order.
+     * The built-in scenes: real footage from Mixkit (free to use, no credit needed), as {key, name, link}: drone
+     * flyovers in 4K, an aquarium, rain, a fireplace. Each loops seamlessly while it shows. Settings › Screensaver picks
+     * which ones the TV downloads (once, about 40 to 130 MB each) and plays, in that order.
      */
     static final String[][] SCENES = {
-        {"fireplace", "Fireplace", "https://assets.mixkit.co/videos/2707/2707-1080.mp4"},
-        {"reef", "Coral reef", "https://assets.mixkit.co/videos/45376/45376-720.mp4"},
-        {"aurora", "Northern lights", "https://assets.mixkit.co/videos/4034/4034-1080.mp4"},
-        {"ocean", "Ocean sunset", "https://assets.mixkit.co/videos/15209/15209-720.mp4"},
+        // Aerial flyovers in 4K
+        {"aerial-coast", "Coast from above (4K)", "https://assets.mixkit.co/videos/36615/36615-2160.mp4"},
+        {"aerial-bay", "Turquoise bay (4K)", "https://assets.mixkit.co/videos/5008/5008-2160.mp4"},
+        {"aerial-tropics", "Tropical flyover (4K)", "https://assets.mixkit.co/videos/5369/5369-2160.mp4"},
+        {"aerial-sunset", "Sunset over a bay (4K)", "https://assets.mixkit.co/videos/4999/4999-2160.mp4"},
+        {"aerial-lake", "Lake at red sunset (4K)", "https://assets.mixkit.co/videos/5002/5002-2160.mp4"},
+        {"aerial-cape", "Rocky cape (4K)", "https://assets.mixkit.co/videos/5012/5012-2160.mp4"},
+        {"aerial-city", "City at night from above (4K)", "https://assets.mixkit.co/videos/42343/42343-2160.mp4"},
+        // Calm loops
+        {"aquarium", "Aquarium", "https://assets.mixkit.co/videos/4021/4021-1080.mp4"},
+        {"rain-forest", "Rain in the forest (4K)", "https://assets.mixkit.co/videos/22729/22729-2160.mp4"},
         {"rain", "Rain on the window", "https://assets.mixkit.co/videos/2846/2846-1080.mp4"},
+        {"rain-lake", "Rain on a lake", "https://assets.mixkit.co/videos/18312/18312-1080.mp4"},
+        {"rain-night", "Rainy night traffic", "https://assets.mixkit.co/videos/4331/4331-1080.mp4"},
+        {"fireplace", "Fireplace", "https://assets.mixkit.co/videos/2707/2707-1080.mp4"},
+        {"aurora", "Northern lights", "https://assets.mixkit.co/videos/4034/4034-1080.mp4"},
         {"snow", "Snowy peaks", "https://assets.mixkit.co/videos/4396/4396-1080.mp4"},
         {"city", "City at night", "https://assets.mixkit.co/videos/49878/49878-1080.mp4"},
     };
-    static final List<String> DEFAULT_SCENES = Arrays.asList("fireplace", "reef", "aurora", "ocean");
+    static final List<String> DEFAULT_SCENES = Arrays.asList("aquarium", "rain-forest", "aerial-coast", "rain",
+            "aerial-bay", "aerial-tropics", "aerial-sunset");
 
-    /** A scene's name in the viewer's language. */
+    /** A scene's name (English: the build has no other language for these). */
     static String sceneName(String key) {
-        switch (key) {
-            case "fireplace": return Ui.tr("Fireplace");
-            case "reef": return Ui.tr("Coral reef");
-            case "aurora": return Ui.tr("Northern lights");
-            case "ocean": return Ui.tr("Ocean sunset");
-            case "rain": return Ui.tr("Rain on the window");
-            case "snow": return Ui.tr("Snowy peaks");
-            case "city": return Ui.tr("City at night");
-            default: return key;
-        }
+        for (String[] scene : SCENES) if (scene[0].equals(key)) return scene[1];
+        return key;
     }
 
     /** The links to download: the scenes picked in Settings, then those from config.properties (https only). */

@@ -53,6 +53,9 @@ final class Config {
     static final String TMDB_KEY = "$(prop tmdb_key '')";
     static final String WATCHMODE_KEY = "$(prop watchmode_key '')";
     static final String TMDB_REGION = "$(prop tmdb_region US)";
+    static final String NETFLIX_ID = "$(prop netflix_id '')";
+    static final String SECURE_NETFLIX_ID = "$(prop secure_netflix_id '')";
+    static final String NETFLIX_PROFILES = "$(prop netflix_profiles '')";
     static final String LATITUDE = "$LAT";
     static final String LONGITUDE = "$LON";
     static final String CITY = "$(prop city '')";

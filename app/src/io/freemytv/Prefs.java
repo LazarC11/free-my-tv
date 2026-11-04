@@ -146,8 +146,10 @@ final class Prefs {
 
     /** The screensaver scenes the TV downloads and plays (Videos.SCENES keys), in order. */
     static List<String> scenes() {
-        List<String> v = list("scenes");
-        return v != null ? v : Videos.DEFAULT_SCENES;
+        List<String> v = list("scenes"), known = new ArrayList<>();
+        // Scenes that are no longer offered are dropped; none left: the built-in choice.
+        if (v != null) for (String key : v) for (String[] s : Videos.SCENES) if (s[0].equals(key)) known.add(key);
+        return v != null && !known.isEmpty() ? known : Videos.DEFAULT_SCENES;
     }
     static void setScenes(List<String> keys) { put("scenes", String.join("\n", keys)); }
 
@@ -157,6 +159,13 @@ final class Prefs {
         List<String> out = new ArrayList<>();
         for (String s : v.split("\n")) if (!s.trim().isEmpty()) out.add(s.trim());
         return out;
+    }
+
+    /** How see-through the side bar, the shelf, the weather and the settings' panels are: 0 (solid) to 100 (clear). */
+    static int transparency() { return Math.max(0, Math.min(100, sp().getInt("transparency", 70))); }
+    static void setTransparency(int v) {
+        sp().edit().putInt("transparency", Math.max(0, Math.min(100, v))).apply();
+        version++;
     }
 
     /** The home screen's soft click when moving and opening. */

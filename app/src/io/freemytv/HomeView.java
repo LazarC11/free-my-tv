@@ -52,14 +52,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * The home screen, in liquid glass:
- *  - the background: the photo of the day in 4K (DailyPhoto; or your own photos), its title above the shelf with ◀ ▶
- *    for another one today. For 5 minutes after you watched something, that show instead (Continue watching, with a
- *    dark fade on the left for its title and Resume). While music plays, the artist's photo (ArtistArt);
- *  - at the left, the side bar: a glass pill with the TV maker's logo, Home, Live TV, the HDMI inputs, Settings
+ * The home screen, on see-through panels (Glass.Panel; Settings › Home screen › Transparency):
+ *  - the background: the photo of the day in 4K (DailyPhoto; or your own photos; another one today: the dot under the
+ *    side bar). For 3 minutes after you watched something, that show instead (Continue watching, with a dark fade on
+ *    the left for its title and Resume). While music plays, the artist's photo (ArtistArt);
+ *  - at the left, the side bar: a pill with the TV maker's logo, Home, Live TV, the HDMI inputs, Settings
  *    (Settings › Side bar picks them); ← opens it into a panel with their names;
- *  - top right, the clock in clear glass (Glass.clock), the weather beside it and the date below;
- *  - along the bottom, the shelf: square apps on a glass bar, centered; the focused one grows, lights up and a shine
+ *  - top right, the clock in see-through digits of the background's color, the weather beside it, the date below;
+ *  - along the bottom, the shelf: square apps on a bar, centered; the focused one grows, lights up and a shine
  *    sweeps across it (like the PS5). Apps that don't fit squeeze into dots at either end;
  *  - while music plays, the playing app's tile becomes the album cover, 3× its size, at the left of the shelf, with
  *    the song, its progress and ⏮ ⏯ ⏭ above the shelf;
@@ -70,28 +70,28 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         NowPlaying.Listener {
     // Side bar
     private static final float RAIL_X = 40, RAIL_W = 76, RAIL_CY = 460, RAIL_ITEM = 56, RAIL_GAP = 6, RAIL_LOGO = 52;
-    private static final float RAIL_OPEN_W = 340, RAIL_ROW = 64, RAIL_HEAD = 34;
+    private static final float RAIL_OPEN_W = 340, RAIL_ROW = 64, RAIL_HEAD = 34, DOT_R = RAIL_W / 2, DOT_GAP = 26;
     // Clock (top right) and weather
     private static final float CLOCK_RIGHT = 1848, CLOCK_TOP = 30, CLOCK_W = 620, CLOCK_H = 220, CLOCK_BASE = 150;
     // Shelf
-    private static final float TILE = 156, GAP = 26, PAD = 26, DOCK_H = 204, DOCK_TOP = 812, DOCK_R = 58, TILE_R = 36, GROW = 0.16f;
-    private static final float MUSIC_GAP = 22, MUSIC_PAD = 22, MUSIC_DOCK_LEFT = 632, MUSIC_DOCK_RIGHT = 1840;
+    // The padding around the tiles is the same on all four sides: (DOCK_H - TILE) / 2.
+    private static final float TILE = 156, GAP = 24, PAD = 24, DOCK_H = 204, DOCK_TOP = 836, DOCK_R = 58, TILE_R = 36, GROW = 0.16f;
+    private static final float MUSIC_GAP = 24, MUSIC_PAD = 24, MUSIC_DOCK_LEFT = 632, MUSIC_DOCK_RIGHT = 1840;
     private static final float DOTS = 58;
     // Music
-    private static final float COVER = 468, COVER_X = 140, COVER_TOP = 524, TRACK_X = 660;
+    private static final float COVER = 468, COVER_X = 140, COVER_TOP = 548, TRACK_X = 660;
     // Rows below
-    private static final float ROWS_TOP = 1072, CARD_W = 420, CARD_H = 236, CARD_GAP = 24, CARD_R = 28;
+    private static final float ROWS_TOP = 1096, CARD_W = 420, CARD_H = 236, CARD_GAP = 24, CARD_R = 28;
     private static final float WEATHER_H = 360, GRID_GAP_Y = 40;
     private static final int GRID_COLS = 8;
-    private static final float SCROLL_ROWS = 552;
+    private static final float SCROLL_ROWS = 576;
 
-    private static final long FADE = 900, TOAST_MS = 6000, HOLD_MS = 550, BURST_MS = 1500, HERO_MS = 5 * 60_000L;
+    private static final long FADE = 900, TOAST_MS = 6000, HOLD_MS = 550, BURST_MS = 1500, HERO_MS = 3 * 60_000L;
     private static final long SHINE_MS = 900, SHINE_EVERY = 4500;
     private static final int Z_RAIL = 0, Z_CAPTION = 1, Z_HERO = 2, Z_MUSIC = 3, Z_SHELF = 4, Z_ROW = 5, Z_GRID = 6;
     private static final int WHITE = 0xFFF5F5F7, INK = 0xFF111114;
     private static final ExecutorService LOADER = Executors.newSingleThreadExecutor();
     private static final ExecutorService IMAGES = Executors.newSingleThreadExecutor();
-    private static final ExecutorService GLASS = Executors.newSingleThreadExecutor();
     private static final Map<String, Bitmap> SQUARES = new LinkedHashMap<>(64, 0.75f, true);
 
     private final Activity activity;
@@ -129,19 +129,19 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
     private final Spring shelfScroll = new Spring(0.4f, 1f, 0), dockLeft = new Spring(0.45f, 1f, 0), dockRight = new Spring(0.45f, 1f, 0);
     private int shelfFirst;
     private long shineAt;
+    private boolean online = true, ethernet;   // the network dot above the side bar
     private String[] shelfLabels = new String[0];
 
     // Background: the photo, the show or the artist, baked once with its shading (one texture to draw)
     private static final class Backing {
         String key = "", title = "", place = "";
         Bitmap image, blurred, behindClock;
+        int clockTint = 0xFFFFFFFF;     // the clock's color: the background behind it, made light
     }
 
     private Backing backing, incoming;
     private long fadeAt;
     private int bakeGeneration;
-    private Bitmap clockGlass;
-    private String clockFor = "";
     private final Paint photo = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
 
     // Continue watching (the hero) and the rows below
@@ -191,10 +191,10 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
     private long appsAt;
 
     // Paints (made at layout)
-    private TextPaint datePaint, tempPaint, condPaint, labelPaint, captionPaint, captionBold, chipPaint, railLabel, railSub,
+    private TextPaint datePaint, tempPaint, condPaint, labelPaint, railLabel, railSub,
             railHead, kickerPaint, heroTitle, heroMeta, smallPaint, buttonPaint, trackTitlePaint, trackArtistPaint,
             timePaint, sectionPaint, cardTitlePaint, gridLabelPaint, toastPaint, bigTempPaint, hourPaint;
-    private Paint clockFont;
+    private Paint clockFont, clockInk;
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), ring = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint image = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final Paint shine = new Paint(Paint.ANTI_ALIAS_FLAG), shadowPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
@@ -271,8 +271,6 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         fitLabels();
         updateTrackText();
         backing = incoming = null;
-        clockGlass = null;
-        clockFor = "";
         retarget();
         dockLeft.snap(dockLeft.target);
         dockRight.snap(dockRight.target);
@@ -281,6 +279,8 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
 
     private void makePaints() {
         clockFont = Ui.text(Ui.displayHeavy, 152 * k, WHITE);
+        clockInk = new Paint(clockFont);
+        clockInk.setTextAlign(Paint.Align.LEFT);
         clockFont.setLetterSpacing(0.013f);
         datePaint = shadowed(paint(Ui.semibold, 26, 0xE6FFFFFF));
         datePaint.setTextAlign(Paint.Align.RIGHT);
@@ -288,9 +288,6 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         condPaint = shadowed(paint(Ui.medium, 20, 0xD1FFFFFF));
         labelPaint = shadowed(paint(Ui.semibold, 24, WHITE));
         labelPaint.setTextAlign(Paint.Align.CENTER);
-        captionPaint = shadowed(paint(Ui.regular, 22, 0xD9FFFFFF));
-        captionBold = shadowed(paint(Ui.semibold, 22, WHITE));
-        chipPaint = paint(Ui.medium, 19, WHITE);
         railLabel = paint(Ui.medium, 24, WHITE);
         railSub = paint(Ui.regular, 17, 0x8CFFFFFF);
         railHead = paint(Ui.semibold, 16, 0x80FFFFFF);
@@ -368,7 +365,11 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         handler.postDelayed(tick, 15_000);
         handler.post(clockTick);
         checkNotices();
+        updateNetwork();
         if (!again) reload();
+        // Back from Netflix: its history now (it tells nothing else what plays), so what was just watched takes the
+        // background as soon as the list arrives.
+        NetflixHistory.refreshNow(getContext(), () -> handler.post(this::reload));
         final Context c = getContext().getApplicationContext();
         LOADER.execute(() -> {
             if (DailyPhoto.refresh(c)) handler.post(() -> rebake(false));
@@ -430,6 +431,7 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
             data.refreshIfStale();
             recs.refreshIfStale();
             checkNotices();
+            updateNetwork();
             if (hero != null && System.currentTimeMillis() > heroUntil) {
                 hero = null;
                 if (zone == Z_HERO) zone = Z_SHELF;
@@ -444,7 +446,6 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         @Override public void run() {
             if (!running) return;
             if (updateClock()) {
-                makeClockGlass();
                 invalidate();
             }
             long now = System.currentTimeMillis();
@@ -537,7 +538,9 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         if (minute == clockMinute && Ui.generation == clockGeneration) return false;
         clockMinute = minute;
         clockGeneration = Ui.generation;
-        clockText = Ui.clock(now);
+        // The TV's own 12/24-hour setting wins over the language's habit.
+        clockText = android.text.format.DateFormat.is24HourFormat(getContext())
+                ? new java.text.SimpleDateFormat("H:mm", Ui.locale()).format(new java.util.Date(now)) : Ui.clock(now);
         String d = Ui.date(now);
         dateText = d.isEmpty() ? d : d.substring(0, 1).toUpperCase(Ui.locale()) + d.substring(1);
         return true;
@@ -559,6 +562,7 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
 
     private void reload() {
         final Context c = getContext().getApplicationContext();
+        glass.opacity = 1 - Prefs.transparency() / 100f;
         long up = SystemClock.uptimeMillis();
         final boolean fresh = appsStale || Prefs.version != appsVersion || Ui.generation != appsGeneration || up - appsAt > 10 * 60_000L;
         if (fresh) {
@@ -572,7 +576,18 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         LOADER.execute(() -> {
             final List<HomeApps.Item> s = fresh ? HomeApps.shelf(c, true) : null;
             final List<HomeApps.Item> r = HomeApps.rail(c);
-            final List<WatchNext.Entry> next = WatchNext.load(c);
+            // Continue watching: Android's Watch Next list, the video apps' sessions and Netflix's history, newest
+            // first, each title once.
+            final List<WatchNext.Entry> next = new ArrayList<>(WatchNext.load(c));
+            next.addAll(VideoHistory.recent(c));
+            next.addAll(NetflixHistory.recent(c));
+            java.util.Collections.sort(next, (a, b) -> Long.compare(b.engaged, a.engaged));
+            Set<String> titles = new HashSet<>();
+            for (java.util.Iterator<WatchNext.Entry> i = next.iterator(); i.hasNext(); ) {
+                WatchNext.Entry e = i.next();
+                if (!titles.add(e.pkg + "|" + e.title.toLowerCase(java.util.Locale.ROOT))) i.remove();
+            }
+            NetflixHistory.refreshIfStale(c, () -> handler.post(this::reload));
             final List<HomeApps.Item> all = needGrid ? HomeApps.allApps(c) : null;
             handler.post(() -> {
                 if (s != null && !reordering) setApps(s);
@@ -632,8 +647,8 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
     }
 
     /**
-     * Continue watching: the apps' Watch Next list. Something watched while we were away (up to 5 minutes ago) takes
-     * the background for 5 minutes; after that it waits in the row below the shelf.
+     * Continue watching: the apps' Watch Next list. Something watched while we were away (up to 3 minutes ago) takes
+     * the background for 3 minutes; after that it waits in the row below the shelf.
      */
     private void setWatchNext(List<WatchNext.Entry> next, long pausedAt) {
         watchNext = next;
@@ -803,7 +818,6 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
                     incoming = ready;
                     fadeAt = SystemClock.uptimeMillis();
                 }
-                makeClockGlass();
                 wake();
             });
         });
@@ -860,11 +874,23 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         Bitmap soft = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
         Canvas cv = new Canvas(soft);
         cv.drawColor(0xFF000000);
-        cv.drawBitmap(art, left, 0, new Paint(Paint.FILTER_BITMAP_FLAG));
+        // The picture's left edge melts into the black (no straight line where it starts): its first 45% fades in.
+        Bitmap layer = Bitmap.createBitmap(aw, bh, Bitmap.Config.ARGB_8888);
+        Canvas lc = new Canvas(layer);
+        lc.drawBitmap(art, 0, 0, new Paint(Paint.FILTER_BITMAP_FLAG));
         art.recycle();
+        Paint mask = new Paint(Paint.DITHER_FLAG);
+        mask.setShader(new LinearGradient(0, 0, aw * 0.45f, 0, new int[] {0x00000000, 0x59000000, 0xD9000000, 0xFF000000},
+                new float[] {0, 0.35f, 0.75f, 1}, Shader.TileMode.CLAMP));
+        mask.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN));
+        lc.drawRect(0, 0, aw * 0.45f, bh, mask);
+        cv.drawBitmap(layer, left, 0, null);
+        layer.recycle();
         Paint p = new Paint(Paint.DITHER_FLAG);
-        p.setShader(new LinearGradient(0, 0, bw, 0, new int[] {0xFF000000, 0xFF000000, 0xD9000000, 0x59000000, 0x00000000},
-                new float[] {0, 0.2f, 0.32f, 0.52f, 0.7f}, Shader.TileMode.CLAMP));
+        // Then a long, soft darkening from the left for the title and Resume.
+        p.setShader(new LinearGradient(0, 0, bw, 0,
+                new int[] {0xF2000000, 0xE0000000, 0xA6000000, 0x59000000, 0x1A000000, 0x00000000},
+                new float[] {0, 0.18f, 0.32f, 0.46f, 0.6f, 0.72f}, Shader.TileMode.CLAMP));
         cv.drawRect(0, 0, bw, bh, p);
         p.setShader(new LinearGradient(0, 0, 0, bh, new int[] {0x40000000, 0x00000000, 0x00000000, 0xCC000000},
                 new float[] {0, 0.2f, 0.55f, 1}, Shader.TileMode.CLAMP));
@@ -874,30 +900,52 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         return finish(b, soft);
     }
 
-    /** The artist's photo (or the album cover, blurred), darker on the left and at the bottom for the text. */
+    /**
+     * The artist's photo (or, until it's saved, the album cover) on black, the left side fading to black for the
+     * text. Only a photo already saved: a new artist shows the cover at once while the photo downloads (fetchArtist),
+     * then fades to it. A wide photo fills the screen; a square one (or the cover) stands at full height on the right,
+     * never zoomed in.
+     */
     private Backing bakeMusic(Context c, NowPlaying.Track t, boolean artistPhoto, int bw, int bh) {
         Backing b = new Backing();
-        Bitmap soft = null;
-        if (artistPhoto) {
-            File f = ArtistArt.photo(c, t.artist);
-            if (f != null) {
-                soft = decode(f, bw, bh);
-                b.key = "artist:" + f.getName();
-            }
+        File f = artistPhoto ? ArtistArt.cached(c, t.artist) : null;
+        if (artistPhoto && f == null) fetchArtist(c, t.artist);
+        Bitmap photo = f == null ? null : decodeHeight(f, bh);
+        boolean own = photo != null;
+        if (own) {
+            b.key = "artist:" + f.getName();
+        } else if (t.art != null && !t.art.isRecycled()) {
+            photo = t.art;
+            b.key = "album:" + System.identityHashCode(t.art);
+        } else {
+            return null;
         }
-        Bitmap art = t.art;
-        if (soft == null && art != null && !art.isRecycled()) {
-            Bitmap small = Bitmap.createScaledBitmap(art, 48, Math.max(1, 48 * bh / bw), true);
-            Bitmap big = Bitmap.createScaledBitmap(small, bw, bh, true);
-            soft = big.isMutable() ? big : big.copy(Bitmap.Config.ARGB_8888, true);
-            new Canvas(soft).drawColor(0x66000000);
-            b.key = "album:" + System.identityHashCode(art);
-        }
-        if (soft == null) return null;
+        Bitmap soft = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888);
+        soft.eraseColor(0xFF000000);
         Canvas cv = new Canvas(soft);
+        Paint filter = new Paint(Paint.FILTER_BITMAP_FLAG);
+        float pw = photo.getWidth() * (bh / (float) photo.getHeight());
+        if (pw >= bw) {
+            // Wide (TheAudioDB): fills the screen, cut only at the sides.
+            float left = (bw - pw) / 2;
+            cv.drawBitmap(photo, null, new RectF(left, 0, left + pw, bh), filter);
+        } else {
+            // Square (Deezer, the cover): full height on the right, its left edge fading into the black.
+            Bitmap layer = Bitmap.createBitmap(Math.round(pw), bh, Bitmap.Config.ARGB_8888);
+            Canvas lc = new Canvas(layer);
+            lc.drawBitmap(photo, null, new RectF(0, 0, pw, bh), filter);
+            Paint mask = new Paint();
+            mask.setShader(new LinearGradient(0, 0, pw * 0.45f, 0, 0x00000000, 0xFF000000, Shader.TileMode.CLAMP));
+            mask.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN));
+            lc.drawRect(0, 0, pw * 0.45f, bh, mask);
+            cv.drawBitmap(layer, bw - pw, 0, null);
+            layer.recycle();
+        }
+        if (own) photo.recycle();
         Paint p = new Paint(Paint.DITHER_FLAG);
-        p.setShader(new LinearGradient(0, 0, bw, 0, new int[] {0xBF000000, 0x73000000, 0x0D000000, 0x00000000},
-                new float[] {0, 0.3f, 0.6f, 1}, Shader.TileMode.CLAMP));
+        // The left side to almost black (the cover and the song sit there), as for a show.
+        p.setShader(new LinearGradient(0, 0, bw, 0, new int[] {0xF2000000, 0xD9000000, 0x59000000, 0x00000000},
+                new float[] {0, 0.3f, 0.55f, 0.75f}, Shader.TileMode.CLAMP));
         cv.drawRect(0, 0, bw, bh, p);
         p.setShader(new LinearGradient(0, 0, 0, bh, new int[] {0x4D000000, 0x00000000, 0x40000000, 0xD9000000},
                 new float[] {0, 0.25f, 0.55f, 1}, Shader.TileMode.CLAMP));
@@ -912,37 +960,57 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         int cx = Math.round((CLOCK_RIGHT - CLOCK_W) * kk), cy = Math.round(CLOCK_TOP * kk);
         int cw = Math.min(bw - cx, Math.round(CLOCK_W * kk)), ch = Math.min(bh - cy, Math.round(CLOCK_H * kk));
         b.behindClock = Bitmap.createBitmap(soft, cx, cy, cw, ch);
-        Bitmap small = Bitmap.createScaledBitmap(soft, Math.max(1, bw / 16), Math.max(1, bh / 16), true);
-        b.blurred = Bitmap.createScaledBitmap(small, Math.max(1, bw / 4), Math.max(1, bh / 4), true);
-        small.recycle();
+        // The clock follows the background: its average color there, mixed with white so the digits stay light.
+        Bitmap one = Bitmap.createScaledBitmap(b.behindClock, 1, 1, true);
+        int avg = one.getPixel(0, 0);
+        one.recycle();
+        b.clockTint = 0xFF000000 | mixWhite((avg >> 16) & 255) << 16 | mixWhite((avg >> 8) & 255) << 8 | mixWhite(avg & 255);
+        // A smooth blur at an eighth of the size (drawn scaled up, filtered: still smooth), no blocks.
+        b.blurred = Blur.soft(soft, bw / 8, bh / 8, 5);
         b.image = gpu(soft);
         return b;
     }
 
-    /** The clock's glass for this minute and this background, made in the background (it is slow to make). */
-    private void makeClockGlass() {
-        final Backing b = incoming != null ? incoming : backing;
-        if (b == null || b.behindClock == null || clockFont == null || clockText.isEmpty()) return;
-        final String key = b.key + "|" + clockText + "|" + w;
-        if (key.equals(clockFor)) return;
-        clockFor = key;
-        final String text = clockText;
-        final Paint font = new Paint(clockFont);
-        final float scale = b.behindClock.getWidth() / (CLOCK_W * k);
-        font.setTextSize(clockFont.getTextSize() * scale);
-        final float right = (CLOCK_W - 6) * k * scale, base = CLOCK_BASE * k * scale, kk = k * scale;
-        GLASS.execute(() -> {
-            Bitmap g;
-            try {
-                g = Glass.clock(b.behindClock, text, font, right, base, kk);
-            } catch (RuntimeException | OutOfMemoryError e) {
-                AppLog.w("glass clock: " + e.getMessage());
-                return;
+    /** A color channel 65% of the way to white. */
+    private static int mixWhite(int v) {
+        return Math.round(v + (255 - v) * 0.65f);
+    }
+
+
+    /** A photo decoded at about `h` px high (never smaller than needed), its shape kept. */
+    private static Bitmap decodeHeight(File f, int h) {
+        try {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(f.getPath(), bounds);
+            if (bounds.outHeight <= 0) return null;
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inSampleSize = 1;
+            while (bounds.outHeight / (opts.inSampleSize * 2) >= h) opts.inSampleSize *= 2;
+            return BitmapFactory.decodeFile(f.getPath(), opts);
+        } catch (RuntimeException | OutOfMemoryError e) {
+            AppLog.w("artist photo: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private static final ExecutorService ARTISTS = Executors.newSingleThreadExecutor();
+    private final Set<String> fetchingArtists = new HashSet<>();
+
+    /** Downloads the artist's photo once; the background takes it if that artist still plays. */
+    private void fetchArtist(Context c, String artist) {
+        final String name = ArtistArt.mainArtist(artist);
+        synchronized (fetchingArtists) {
+            if (name.isEmpty() || !fetchingArtists.add(name)) return;
+        }
+        ARTISTS.execute(() -> {
+            File got = ArtistArt.photo(c, name);
+            synchronized (fetchingArtists) {
+                fetchingArtists.remove(name);
             }
+            if (got == null) return;
             handler.post(() -> {
-                if (!key.equals(clockFor)) return;
-                clockGlass = g;
-                invalidate();
+                if (track != null && ArtistArt.mainArtist(track.artist).equals(name)) rebake(false);
             });
         });
     }
@@ -1044,7 +1112,8 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
 
     /** The shine sweeps for SHINE_MS after the focus lands on an app, then again every SHINE_EVERY. */
     private boolean shining(long up) {
-        if (zone != Z_SHELF || shelf.isEmpty() || reordering) return false;
+        boolean cover = zone == Z_MUSIC && musicIndex == 0 && track != null;
+        if (!cover && (zone != Z_SHELF || shelf.isEmpty() || reordering)) return false;
         long t = (up - shineAt) % SHINE_EVERY;
         if (t < SHINE_MS) return true;
         handler.removeCallbacks(shineAgain);
@@ -1080,12 +1149,17 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         for (int i = 0; i < cardFocus.length; i++) cardFocus[i].target = zone == Z_ROW && rowIndex == i ? 1 : 0;
         for (int i = 0; i < gridFocus.length; i++) gridFocus[i].target = zone == Z_GRID && gridIndex == i ? 1 : 0;
         for (int i = 0; i < musicFocus.length; i++) musicFocus[i].target = zone == Z_MUSIC && musicIndex == i ? 1 : 0;
-        railOpen.target = zone == Z_RAIL ? 1 : 0;
+        railOpen.target = zone == Z_RAIL || zone == Z_CAPTION ? 1 : 0;   // the photo row is part of the open bar
         // The shelf: where the bar is, how many apps fit, and the window of apps shown.
         float left, right;
         if (track != null) {
+            // Beside the cover: as wide as its apps, up to the right edge.
+            float max = MUSIC_DOCK_RIGHT - MUSIC_DOCK_LEFT;
+            int fit = Math.max(1, (int) Math.floor((max - 2 * MUSIC_PAD + MUSIC_GAP) / (TILE + MUSIC_GAP)));
+            int n = Math.max(1, shelf.size());
+            float dw = n > fit ? max : n * TILE + (n - 1) * MUSIC_GAP + 2 * MUSIC_PAD;
             left = MUSIC_DOCK_LEFT * k;
-            right = MUSIC_DOCK_RIGHT * k;
+            right = (MUSIC_DOCK_LEFT + dw) * k;
         } else {
             int fit = Math.max(1, (int) Math.floor((1640 - 2 * PAD + GAP) / (TILE + GAP)));
             int n = Math.max(1, Math.min(shelf.size(), fit));
@@ -1116,7 +1190,8 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
     private int slots() {
         float gap = track != null ? MUSIC_GAP : GAP, pad = track != null ? MUSIC_PAD : PAD;
         float width = (dockRight.target - dockLeft.target) / Math.max(1e-3f, k);
-        int n = Math.max(1, (int) Math.floor((width - 2 * pad + gap) / (TILE + gap)));
+        // + 0.01: a bar made exactly n tiles wide must not round down to n - 1.
+        int n = Math.max(1, (int) Math.floor((width - 2 * pad + gap) / (TILE + gap) + 0.01f));
         if (shelf.size() <= n) return n;
         return Math.max(1, (int) Math.floor((width - 2 * pad - 2 * DOTS + gap) / (TILE + gap)));
     }
@@ -1159,12 +1234,14 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         if (gone < 1) {
             if (track != null) drawMusic(c, 1 - gone);
             else if (hero != null) drawHero(c, 1 - gone);
-            else drawCaption(c, 1 - gone);
         }
         drawShelf(c, m);
         if (scroll > 1) drawRows(c, scroll);
         c.restoreToCount(save);
-        drawClock(c);
+        // The clock and the weather fade as the page scrolls, so they never sit on the rows.
+        float clockAlpha = 1 - Ui.clamp(scroll / (240 * k));
+        if (clockAlpha > 0.01f) drawClock(c, clockAlpha);
+        drawRailDots(c);
         drawRail(c);
         drawToast(c);
     }
@@ -1209,23 +1286,33 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
     }
 
     /** Top right: the glass clock, the weather beside it, the date below. */
-    private void drawClock(Canvas c) {
-        float left = (CLOCK_RIGHT - CLOCK_W) * k, top = CLOCK_TOP * k;
-        if (clockGlass != null) {
-            rect.set(left, top, left + CLOCK_W * k, top + CLOCK_H * k);
-            photo.setAlpha(255);
-            c.drawBitmap(clockGlass, null, rect, photo);
-        }
+    /** `alpha`: faded on each paint (not through an offscreen layer, which costs a frame's worth while scrolling). */
+    private void drawClock(Canvas c, float alpha) {
+        // Plain, see-through digits in the background's own color (made light), right-aligned.
+        Backing b = incoming != null ? incoming : backing;
+        clockInk.setColor(b == null ? WHITE : b.clockTint);
+        clockInk.setAlpha(Math.round(0xC7 * alpha));
+        c.drawText(clockText, CLOCK_RIGHT * k - 6 * k - clockInk.measureText(clockText), (CLOCK_TOP + CLOCK_BASE) * k, clockInk);
+        int dateA = datePaint.getAlpha();
+        datePaint.setAlpha(Math.round(dateA * alpha));
         c.drawText(dateText, CLOCK_RIGHT * k - 6 * k, 222 * k, datePaint);
+        datePaint.setAlpha(dateA);
         if (!tempText.isEmpty()) {
-            float right = 1520 * k, cy = 122 * k;
+            // Left of the clock's digits, however wide this minute is ("1:05" or "23:48").
+            float clockLeft = CLOCK_RIGHT * k - 6 * k - clockFont.measureText(clockText);
+            float right = clockLeft - 44 * k, cy = 122 * k;
             fill.setShader(null);
-            fill.setColor(0x4DFFFFFF);
+            fill.setColor(Ui.alpha(0x4DFFFFFF, alpha));
             c.drawRect(right + 25 * k, 80 * k, right + 27 * k, 176 * k, fill);
             float tw = Math.max(tempPaint.measureText(tempText), condPaint.measureText(condText)), tx = right - tw;
+            int tempA = tempPaint.getAlpha(), condA = condPaint.getAlpha();
+            tempPaint.setAlpha(Math.round(tempA * alpha));
+            condPaint.setAlpha(Math.round(condA * alpha));
             c.drawText(tempText, tx, cy + 6 * k, tempPaint);
             c.drawText(condText, tx, cy + 40 * k, condPaint);
-            if (weatherSymbol != null) Symbols.draw(getContext(), c, weatherSymbol, tx - 44 * k, cy, 50 * k, WHITE);
+            tempPaint.setAlpha(tempA);
+            condPaint.setAlpha(condA);
+            if (weatherSymbol != null) Symbols.draw(getContext(), c, weatherSymbol, tx - 44 * k, cy, 50 * k, Ui.alpha(WHITE, alpha));
         }
     }
 
@@ -1239,7 +1326,10 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         boolean anyInput = false;
         for (HomeApps.Item it : rail) anyInput |= it.kind == HomeApps.INPUT || it.kind == HomeApps.LIVE_TV;
         float head = anyInput ? RAIL_HEAD * k * f : 0;
-        float height = 20 * k + (hasLogo ? (RAIL_LOGO + 14) * k : 0) + rail.size() * rowH + 14 * k + head;
+        // Open, the photo dot under the bar joins it as its last row.
+        boolean photoRow = hasPhotoDot();
+        float extra = photoRow ? (14 * k + rowH) * f : 0;
+        float height = 20 * k + (hasLogo ? (RAIL_LOGO + 14) * k : 0) + rail.size() * rowH + 14 * k + head + extra;
         float top = RAIL_CY * k - height / 2, left = RAIL_X * k;
         rect.set(left, top, left + width, top + height);
         float radius = (38 - 4 * o) * k;
@@ -1313,6 +1403,29 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
             }
             y += rowH;
         }
+        if (photoRow && f > 0.02f) {
+            // Another photo today, the dot's row inside the open bar.
+            separator(c, left, width, y + 7 * k, f);
+            y += 14 * k;
+            float fv = zone == Z_CAPTION ? 1 : 0;
+            float itemH = rowH - (RAIL_GAP + 4 * o) * k;
+            float ix = left + (RAIL_W - RAIL_ITEM) / 2 * k * (1 - f) + 12 * k * f;
+            float iw = RAIL_ITEM * k + (width - 24 * k - RAIL_ITEM * k) * f;
+            rect2.set(ix, y, ix + iw, y + itemH);
+            int a = Math.round(255 * f);
+            if (fv > 0) {
+                fill.setShader(null);
+                fill.setColor(Ui.alpha(0xF2FFFFFF, f));
+                float rr = Math.min(itemH / 2, (28 - 6 * f) * k);
+                c.drawRoundRect(rect2, rr, rr, fill);
+            }
+            int ink = Ui.alpha(fv > 0 ? INK : WHITE, f);
+            float iconCx = ix + (iw / 2) * (1 - f) + (30 * k) * f, cy = rect2.centerY();
+            Symbols.draw(getContext(), c, "sync", iconCx, cy, 26 * k, ink);
+            railLabel.setColor(fv > 0 ? INK : WHITE);
+            railLabel.setAlpha(a);
+            c.drawText(Ui.tr("Another photo today"), ix + 62 * k, cy + Ui.halfCap(railLabel), railLabel);
+        }
     }
 
     private void separator(Canvas c, float left, float width, float y, float f) {
@@ -1335,33 +1448,50 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         c.drawCircle(cx, cy - r * 0.05f, r * 0.16f, fill);
     }
 
-    /** Above the shelf: the photo's title and place, and ◀ ▶ for another photo today. */
-    private void drawCaption(Canvas c, float alpha) {
+    /** The photo of the day has another one to show (the dot under the side bar). */
+    private boolean hasPhotoDot() {
         Backing b = incoming != null ? incoming : backing;
-        if (b == null || b.title.isEmpty()) return;
-        float x = dockLeft.value + PAD * k, base = 774 * k;
-        String title = b.title, place = b.place.isEmpty() || b.place.equals(b.title) ? "" : "  ·  " + b.place;
-        captionBold.setAlpha(Math.round(255 * alpha));
-        c.drawText(title, x, base, captionBold);
-        float tx = x + captionBold.measureText(title);
-        captionPaint.setAlpha(Math.round(217 * alpha));
-        String fitPlace = fit(place, captionPaint, 860 * k - (tx - x));
-        c.drawText(fitPlace, tx, base, captionPaint);
-        tx += captionPaint.measureText(fitPlace) + 16 * k;
-        boolean focused = zone == Z_CAPTION;
-        String chip = "◀ ▶  " + Ui.tr("Another photo today");
-        float cw = chipPaint.measureText(chip) + 30 * k;
-        rect.set(tx, base - 27 * k, tx + cw, base + 9 * k);
-        if (focused) {
-            fill.setShader(null);
-            fill.setColor(Ui.alpha(WHITE, alpha));
-            c.drawRoundRect(rect, rect.height() / 2, rect.height() / 2, fill);
-        } else {
-            glass.draw(c, rect, rect.height() / 2, bg(), null, 0, w, h, alpha);
+        return track == null && hero == null && b != null && !b.title.isEmpty();
+    }
+
+    /** The side bar's height when closed (the two dots sit above and under it). */
+    private float railClosedHeight() {
+        return 20 * k + (logo != null ? (RAIL_LOGO + 14) * k : 0) + rail.size() * (RAIL_ITEM + RAIL_GAP) * k + 14 * k;
+    }
+
+    /** Glass dots by the side bar: the network above it, another photo of the day under it. */
+    private void drawRailDots(Canvas c) {
+        if (rail.isEmpty()) return;
+        float a = 1 - Ui.clamp(railOpen.value * 2);     // the open side bar covers them
+        if (a <= 0.01f) return;
+        float cx = (RAIL_X + RAIL_W / 2) * k, half = railClosedHeight() / 2, r = DOT_R * k;
+        // Network: Wi-Fi (or the plug for Ethernet); offline, dimmed with a cross over it.
+        float ny = RAIL_CY * k - half - DOT_GAP * k - r;
+        rect.set(cx - r, ny - r, cx + r, ny + r);
+        glass.draw(c, rect, r, bg(), bg2(), incoming == null ? 0 : fadeT(), w, h, a);
+        int ink = Ui.alpha(online ? WHITE : 0x8CFFFFFF, a);
+        if (ethernet) Symbols.draw(getContext(), c, "hdmi", cx, ny, 26 * k, ink);
+        // The glyph rises from its dot: from 1.48 r above it to 0.11 r below, so its middle is 0.68 r above the dot.
+        else drawWifi(c, cx, ny + 0.68f * 14 * k, 14 * k, ink);
+        if (!online) {
+            arc.setColor(Ui.alpha(WHITE, a));
+            arc.setStrokeWidth(3.5f * k);
+            float s = 13 * k;
+            c.drawLine(cx - s, ny - s, cx + s, ny + s, arc);
+            c.drawLine(cx + s, ny - s, cx - s, ny + s, arc);
         }
-        chipPaint.setColor(focused ? INK : WHITE);
-        chipPaint.setAlpha(Math.round(255 * alpha));
-        c.drawText(chip, tx + 15 * k, base - 2 * k, chipPaint);
+        if (!hasPhotoDot()) return;
+        // Another photo today: OK changes it (focused: white).
+        float py = RAIL_CY * k + half + DOT_GAP * k + r;
+        rect.set(cx - r, py - r, cx + r, py + r);
+        boolean focused = zone == Z_CAPTION;
+        if (focused) {
+            fill.setColor(Ui.alpha(WHITE, a));
+            c.drawCircle(cx, py, r * 1.08f, fill);
+        } else {
+            glass.draw(c, rect, r, bg(), bg2(), incoming == null ? 0 : fadeT(), w, h, a);
+        }
+        Symbols.draw(getContext(), c, "sync", cx, py, 28 * k, Ui.alpha(focused ? INK : WHITE, a));
     }
 
     /** Continue watching: what you were watching, its progress and Resume. */
@@ -1418,8 +1548,14 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         // The cover grows out of the shelf.
         float size = COVER * k * (0.35f + 0.65f * Ui.clamp(music.value)), left = COVER_X * k, bottom = (COVER_TOP + COVER) * k;
         rect.set(left, bottom - size, left + size, bottom);
+        // Focused, it grows a little and the shine sweeps across, like a tile; no ring.
+        float fv = musicFocus[0].value, ff = Ui.clamp(fv);
+        float grow = 1 + 0.04f * fv;
+        rect.set(rect.centerX() - size * grow / 2, rect.centerY() - size * grow / 2,
+                rect.centerX() + size * grow / 2, rect.centerY() + size * grow / 2);
+        size *= grow;
         float radius = 64 * k * (size / (COVER * k));
-        drawSoftShadow(c, rect, m);
+        drawSoftShadow(c, rect, m * (0.7f + 0.3f * ff));
         if (coverShader != null && coverArt != null && !coverArt.isRecycled()) {
             float bw = coverArt.getWidth(), bh = coverArt.getHeight(), side = Math.min(bw, bh);
             src.set((bw - side) / 2, (bh - side) / 2, (bw + side) / 2, (bh + side) / 2);
@@ -1435,9 +1571,7 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
             c.drawRoundRect(rect, radius, radius, fill);
             Symbols.draw(getContext(), c, "play", rect.centerX(), rect.centerY(), 80 * k, Ui.alpha(0xCCFFFFFF, m));
         }
-        ring.setColor(Ui.alpha(0x33FFFFFF, m));
-        ring.setStrokeWidth(2 * k);
-        c.drawRoundRect(rect, radius, radius, ring);
+        if (ff > 0.01f) drawShine(c, rect, radius, ff * m);
         // The playing app's own tile as a badge in the corner.
         HomeApps.Item app = null;
         for (HomeApps.Item it : apps) if (t.pkg != null && t.pkg.equals(it.pkg)) app = it;
@@ -1449,14 +1583,14 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         // The song.
         float x = TRACK_X * k;
         kickerPaint.setAlpha(Math.round(199 * m));
-        c.drawText(trackKicker, x + 48 * k, 548 * k, kickerPaint);
-        drawBars(c, x, 548 * k, m, t.playing);
+        c.drawText(trackKicker, x + 48 * k, 572 * k, kickerPaint);
+        drawBars(c, x, 572 * k, m, t.playing);
         trackTitlePaint.setAlpha(Math.round(255 * m));
-        c.drawText(trackTitle, x - Ui.leftBearing(trackTitlePaint, trackTitle), 616 * k, trackTitlePaint);
+        c.drawText(trackTitle, x - Ui.leftBearing(trackTitlePaint, trackTitle), 640 * k, trackTitlePaint);
         trackArtistPaint.setAlpha(Math.round(217 * m));
-        c.drawText(trackArtist, x, 656 * k, trackArtistPaint);
+        c.drawText(trackArtist, x, 680 * k, trackArtistPaint);
         // The progress, then the controls centered under it.
-        float barL = x + 56 * k, barR = x + 576 * k, by = 690 * k;
+        float barL = x + 56 * k, barR = x + 576 * k, by = 714 * k;
         long pos = t.positionNow();
         timePaint.setAlpha(Math.round(204 * m));
         c.drawText(time(pos), x, by + 7 * k, timePaint);
@@ -1470,7 +1604,7 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
             rect.right = barL + (barR - barL) * Ui.clamp(pos / (float) t.duration);
             c.drawRoundRect(rect, 2.5f * k, 2.5f * k, fill);
         }
-        float cx = (barL + barR) / 2, cy = 746 * k;
+        float cx = (barL + barR) / 2, cy = 770 * k;
         drawControl(c, cx - 78 * k, cy, 29 * k, "prev", 1, m);
         drawControl(c, cx, cy, 34 * k, t.playing ? "pause" : "play", 2, m);
         drawControl(c, cx + 78 * k, cy, 29 * k, "next", 3, m);
@@ -1574,16 +1708,6 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         if (focused >= 0) drawTile(c, focused, x0 + (focused - shelfFirst) * step + tileSlide[focused].value, tileTop, size);
         if (dotsLeft) drawDots(c, left + pad + 12 * k, top + DOCK_H * k / 2, 1);
         if (dotsRight) drawDots(c, right - pad - 12 * k, top + DOCK_H * k / 2, -1);
-        // The focused app's name under the bar.
-        if (zone == Z_SHELF && focused >= 0 && focused < shelfLabels.length) {
-            float f = Ui.clamp(tileFocus[focused].value);
-            float cx = x0 + (focused - shelfFirst) * step + tileSlide[focused].value + size / 2;
-            labelPaint.setAlpha(Math.round(255 * f));
-            c.drawText(shelfLabels[focused], cx, 1056 * k, labelPaint);
-        } else if (zone == Z_MUSIC && musicIndex == 0 && track != null) {
-            labelPaint.setAlpha(255);
-            c.drawText(track.app, (COVER_X + COVER / 2) * k, 1056 * k, labelPaint);
-        }
     }
 
     /** Three dots, getting smaller toward the edge: "more apps this way". */
@@ -1613,23 +1737,26 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         ring.setColor(0x24FFFFFF);
         c.drawRoundRect(rect, radius, radius, ring);
         if (f > 0.01f) {
-            // The shine: a band of light sweeping across the tile.
-            long t = (SystemClock.uptimeMillis() - shineAt) % SHINE_EVERY;
-            if (t < SHINE_MS && shineShader != null) {
-                float p = t / (float) SHINE_MS, bw = rect.width() * 0.9f;
-                matrix.setScale(bw, 1);
-                matrix.postRotate(-24);
-                matrix.postTranslate(rect.left - bw + (rect.width() + 2 * bw) * p, rect.top);
-                shineShader.setLocalMatrix(matrix);
-                shine.setAlpha(Math.round(255 * f));
-                c.drawRoundRect(rect, radius, radius, shine);
-            }
+            drawShine(c, rect, radius, f);
             ring.setColor(Ui.alpha(0xF2FFFFFF, f));
             ring.setStrokeWidth(4 * k);
             float o = 7 * k;
             rect.inset(-o, -o);
             c.drawRoundRect(rect, radius + o, radius + o, ring);
         }
+    }
+
+    /** The shine: a band of light sweeping across a focused tile or the cover. */
+    private void drawShine(Canvas c, RectF r, float radius, float alpha) {
+        long t = (SystemClock.uptimeMillis() - shineAt) % SHINE_EVERY;
+        if (t >= SHINE_MS || shineShader == null) return;
+        float p = t / (float) SHINE_MS, bw = r.width() * 0.9f;
+        matrix.setScale(bw, 1);
+        matrix.postRotate(-24);
+        matrix.postTranslate(r.left - bw + (r.width() + 2 * bw) * p, r.top);
+        shineShader.setLocalMatrix(matrix);
+        shine.setAlpha(Math.round(255 * alpha));
+        c.drawRoundRect(r, radius, radius, shine);
     }
 
     private void drawSquare(Canvas c, HomeApps.Item it, RectF r, float radius, float alpha) {
@@ -1749,6 +1876,9 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         fill.setColor(0x26000000);
         c.drawRoundRect(rect, 48 * k, 48 * k, fill);
         HomeData.Weather wx = data.weather;
+        // These paints are shared with Continue watching, which fades them as the page scrolls: set them back here.
+        heroMeta.setAlpha(0xD9);
+        smallPaint.setAlpha(0xD9);
         float ix = pl + 90 * k, iy = pt + 110 * k;
         Symbols.draw(getContext(), c, weatherSymbol != null ? weatherSymbol : "sunny", ix, iy, 84 * k, WHITE);
         c.drawText(tempText, ix + 70 * k, iy + 34 * k, bigTempPaint);
@@ -1816,6 +1946,26 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         c.translate(rect.left + padX, rect.top + padY);
         toast.draw(c);
         c.restoreToCount(save);
+    }
+
+    /** Online (a validated connection) and over Ethernet or Wi-Fi: the dot above the side bar. */
+    private void updateNetwork() {
+        android.net.ConnectivityManager cm = getContext().getSystemService(android.net.ConnectivityManager.class);
+        boolean on = false, eth = false;
+        if (cm != null) {
+            android.net.Network n = cm.getActiveNetwork();
+            android.net.NetworkCapabilities caps = n == null ? null : cm.getNetworkCapabilities(n);
+            if (caps != null) {
+                on = caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+                eth = caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET);
+            }
+        }
+        if (on != online || eth != ethernet) {
+            online = on;
+            ethernet = eth;
+            invalidate();
+        }
     }
 
     /** New notices from the main process (mode switches, the check after the TV boots): those from the last 24 h. */
@@ -1913,27 +2063,28 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         }
     }
 
-    /** The zone above the shelf: the music controls, Resume, or the photo's ◀ ▶. */
+    /** The zone above the shelf: the music controls or Resume (another photo is the dot under the side bar). */
     private int aboveShelf() {
         if (track != null) return Z_MUSIC;
         if (hero != null) return Z_HERO;
-        Backing b = incoming != null ? incoming : backing;
-        return b != null && !b.title.isEmpty() ? Z_CAPTION : -1;
+        return -1;
     }
 
     private void move(int dx, int dy) {
         int beforeZone = zone, before = focusIndex();
         switch (zone) {
             case Z_RAIL:
-                if (dy != 0) railIndex = Math.max(0, Math.min(rail.size() - 1, railIndex + dy));
-                if (dx > 0) zone = lastZone == Z_RAIL ? Z_SHELF : lastZone;
+                // ↓ past the last button: the photo dot under the side bar.
+                if (dy > 0 && railIndex == rail.size() - 1 && hasPhotoDot()) zone = Z_CAPTION;
+                else if (dy != 0) railIndex = Math.max(0, Math.min(rail.size() - 1, railIndex + dy));
+                if (dx > 0) zone = lastZone == Z_RAIL || lastZone == Z_CAPTION ? Z_SHELF : lastZone;
                 break;
             case Z_CAPTION:
-                if (dx != 0) {
-                    anotherPhoto(dx);
-                    return;
+                if (dy < 0) {
+                    zone = Z_RAIL;
+                    railIndex = rail.size() - 1;
                 }
-                if (dy > 0) zone = Z_SHELF;
+                if (dx > 0) zone = Z_SHELF;
                 break;
             case Z_HERO:
                 if (dx < 0) openRail();
@@ -1996,6 +2147,15 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
         if (zone != beforeZone || focusIndex() != before) focusChanged();
     }
 
+    /** The settings open over the home screen: the side bar closes at once (they sit beside the closed one). */
+    void closeRail() {
+        if (zone == Z_RAIL || zone == Z_CAPTION) zone = lastZone == Z_RAIL || lastZone == Z_CAPTION ? Z_SHELF : lastZone;
+        retarget();
+        railOpen.snap(0);
+        for (Spring s : railFocus) s.snap(s.target);
+        invalidate();
+    }
+
     private void openRail() {
         if (rail.isEmpty()) return;
         lastZone = zone;
@@ -2043,7 +2203,7 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
                 break;
             }
             case Z_CAPTION:
-                anotherPhoto(1);
+                if (hasPhotoDot()) anotherPhoto(1);
                 break;
             case Z_HERO:
                 if (hero != null) openEntry(hero);
@@ -2362,15 +2522,17 @@ final class HomeView extends View implements Choreographer.FrameCallback, HomeDa
                 if (i == 0) r.set(COVER_X * k, COVER_TOP * k - scroll, (COVER_X + COVER) * k, (COVER_TOP + COVER) * k - scroll);
                 else {
                     float cx = (TRACK_X + 316) * k + (i - 2) * 78 * k;
-                    r.set(cx - 30 * k, 716 * k - scroll, cx + 30 * k, 776 * k - scroll);
+                    r.set(cx - 30 * k, 740 * k - scroll, cx + 30 * k, 800 * k - scroll);
                 }
                 break;
             case Z_HERO:
                 r.set(contentLeft(), 521 * k - scroll, contentLeft() + 220 * k, 589 * k - scroll);
                 break;
-            case Z_CAPTION:
-                r.set(contentLeft(), 747 * k - scroll, contentLeft() + 860 * k, 783 * k - scroll);
+            case Z_CAPTION: {
+                float cx = (RAIL_X + RAIL_W / 2) * k, cy = RAIL_CY * k + railClosedHeight() / 2 + (DOT_GAP + DOT_R) * k;
+                r.set(cx - DOT_R * k, cy - DOT_R * k, cx + DOT_R * k, cy + DOT_R * k);
                 break;
+            }
             case Z_ROW: {
                 float x = contentLeft() - 16 * k - rowScroll.value + i * (CARD_W + CARD_GAP) * k, top = rowTop() + 56 * k - scroll;
                 r.set(x, top, x + CARD_W * k, top + CARD_H * k);

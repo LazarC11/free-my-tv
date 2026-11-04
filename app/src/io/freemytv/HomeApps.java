@@ -12,6 +12,7 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Color;
 import android.graphics.BitmapShader;
 import android.graphics.Canvas;
 import android.graphics.LinearGradient;
@@ -540,6 +541,11 @@ final class HomeApps {
                         : new Intent(Intent.ACTION_VIEW, TvContract.buildChannelUriForPassthroughInput(it.inputId));
                 break;
             case SETTINGS:
+                // On the home screen, the settings open over it (its side bar and photo stay); elsewhere, their own screen.
+                if (a instanceof HomeActivity) {
+                    ((HomeActivity) a).openSettings();
+                    return true;
+                }
                 intent = new Intent().setComponent(new ComponentName(a, SettingsActivity.class));
                 break;
             case ANDROID_SETTINGS:
@@ -1018,6 +1024,16 @@ final class HomeApps {
         Canvas canvas = new Canvas(b);
         Paint filter = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
         if (it.kind == APP && it.pkg != null) {
+            // A store icon shipped with the app (assets/icons/<package>.png) fills the tile, so they all match.
+            Bitmap store = storeIcon(c, it.pkg);
+            if (store != null) {
+                squareBackground(canvas, size, 0);
+                // A see-through corner means a logo without its own background: give it a margin on the dark card.
+                float in = Color.alpha(store.getPixel(0, 0)) < 128 ? size * 0.16f : 0;
+                canvas.drawBitmap(store, null, new RectF(in, in, size - in, size - in), filter);
+                store.recycle();
+                return b;
+            }
             Drawable icon = appIcon(c, it.pkg);
             if (icon instanceof AdaptiveIconDrawable) {
                 // The layers are 1.5× the visible part (108 dp of which 72 show): a quarter of the tile on each side.
@@ -1067,8 +1083,17 @@ final class HomeApps {
         canvas.drawRect(0, 0, size, size, glow);
     }
 
+    /** The store icon shipped for `pkg` (assets/icons), or null. */
+    static Bitmap storeIcon(Context c, String pkg) {
+        try (InputStream in = c.getAssets().open("icons/" + pkg + ".png")) {
+            return BitmapFactory.decodeStream(in);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
     /** The app's icon at the highest density it has, or null. */
-    private static Drawable appIcon(Context c, String pkg) {
+    static Drawable appIcon(Context c, String pkg) {
         try {
             PackageManager pm = c.getPackageManager();
             ApplicationInfo ai = pm.getApplicationInfo(pkg, 0);

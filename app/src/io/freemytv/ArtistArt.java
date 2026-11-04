@@ -33,6 +33,14 @@ final class ArtistArt {
         return a.trim();
     }
 
+    /** The saved photo only (no download), or null. */
+    static File cached(Context c, String artist) {
+        String name = mainArtist(artist);
+        if (name.isEmpty()) return null;
+        File f = new File(dir(c), Integer.toHexString(name.toLowerCase(Locale.ROOT).hashCode()) + ".jpg");
+        return f.isFile() ? f : null;
+    }
+
     /** The saved photo, or a new download; null if neither source has one (tried again after a day). */
     static File photo(Context c, String artist) {
         String name = mainArtist(artist);

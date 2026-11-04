@@ -12,15 +12,9 @@ import android.graphics.Path;
 import android.graphics.RectF;
 import android.graphics.Shader;
 
-import java.util.HashMap;
-import java.util.Map;
-
 /**
- * Liquid glass, as clear as the iPhone's lock screen clock: what is behind shows through almost untouched (a touch
- * brighter and more saturated); a thin light rim, a soft light band just inside the edge (the glass's thickness), a
- * hairline highlight on the top edge and a faint shadow give the shape.
- *  - clock(): the clock's digits, made once a minute in software (a bitmap drawn as it is);
- *  - panel(): a rounded panel (the side bar, the shelf), drawn on every frame from the background image's shader.
+ *  - clock(): the clock's digits in clear glass, as the iPhone's lock screen clock (made once a minute in software);
+ *  - Panel: a plain see-through panel (the side bar, the shelf, the weather): a translucent fill, a hairline edge.
  */
 final class Glass {
     private Glass() {}
@@ -111,97 +105,30 @@ final class Glass {
 
     // MARK: - Panels
 
-    /** Paints for the panels, made once per screen (nothing is allocated while drawing). */
+    /**
+     * A plain see-through panel (the side bar, the shelf, the weather, the dots): a translucent dark fill and a faint
+     * hairline edge, nothing else (no blur, shine or shadow). Paints made once (nothing is allocated while drawing).
+     */
     static final class Panel {
-        final Paint through = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-        final Paint rim = new Paint(Paint.ANTI_ALIAS_FLAG), glow = new Paint(Paint.ANTI_ALIAS_FLAG),
-                fill = new Paint(Paint.ANTI_ALIAS_FLAG), shadowPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
-        final Matrix matrix = new Matrix();
-        final RectF r = new RectF();
-        final Map<String, Bitmap> shadows = new HashMap<>();
+        private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG), edge = new Paint(Paint.ANTI_ALIAS_FLAG);
         float k = 1;
+        /** How dark the fill is, 0 to 1: 1 - Prefs.transparency() / 100, set by the screen that draws. */
+        float opacity = 0.3f;
 
         Panel() {
-            through.setColorFilter(lift(1.07f, 1.2f));
-            rim.setStyle(Paint.Style.STROKE);
-            glow.setStyle(Paint.Style.STROKE);
-            fill.setColor(0x05FFFFFF);
-            shadowPaint.setColor(0xFF000000);
+            edge.setStyle(Paint.Style.STROKE);
         }
 
-        /**
-         * A glass panel at `rect`: the background (`bg`, drawn to fill `screenW` × `screenH`) seen through it, then the
-         * rim and the light inside the edge; `alpha` fades all of it. `bg2` and `mix`: a second background fading in.
-         */
+        /** The panel at `rect`, faded by `alpha`. The background arguments are unused (kept for the callers). */
         void draw(Canvas c, RectF rect, float radius, Bitmap bg, Bitmap bg2, float mix, int screenW, int screenH, float alpha) {
             if (alpha <= 0.002f) return;
-            drawShadow(c, rect, radius, alpha);
-            int a = Math.round(255 * alpha);
-            if (bg != null) drawThrough(c, rect, radius, bg, screenW, screenH, a);
-            if (bg2 != null && mix > 0) drawThrough(c, rect, radius, bg2, screenW, screenH, Math.round(a * mix));
-            fill.setAlpha(Math.round(5 * alpha));
+            fill.setColor(Ui.alpha(FILL, opacity * alpha));
             c.drawRoundRect(rect, radius, radius, fill);
-            // Light just inside the edge, fading inward: the glass's thickness.
-            float[] insets = {2, 5, 9, 14};
-            int[] alphas = {0x2E, 0x1A, 0x0E, 0x06};
-            for (int i = 0; i < insets.length; i++) {
-                float in = insets[i] * k;
-                r.set(rect.left + in, rect.top + in, rect.right - in, rect.bottom - in);
-                glow.setStrokeWidth(Math.max(1, 3.5f * k));
-                glow.setColor(Ui.alpha(0xFFFFFFFF, alphas[i] / 255f * alpha));
-                c.drawRoundRect(r, Math.max(0, radius - in), Math.max(0, radius - in), glow);
-            }
-            // The rim, and a hairline highlight along the top.
-            rim.setStrokeWidth(Math.max(1, 1.5f * k));
-            rim.setColor(Ui.alpha(0x57FFFFFF, alpha));
-            c.drawRoundRect(rect, radius, radius, rim);
-            int save = c.save();
-            c.clipRect(rect.left, rect.top - 2, rect.right, rect.top + radius * 0.8f);
-            rim.setStrokeWidth(Math.max(1, 2.2f * k));
-            rim.setColor(Ui.alpha(0x99FFFFFF, alpha));
-            r.set(rect.left + k, rect.top + k, rect.right - k, rect.bottom - k);
-            c.drawRoundRect(r, radius, radius, rim);
-            c.restoreToCount(save);
+            edge.setStrokeWidth(Math.max(1, 1.2f * k));
+            edge.setColor(Ui.alpha(EDGE, alpha));
+            c.drawRoundRect(rect, radius, radius, edge);
         }
 
-        private void drawThrough(Canvas c, RectF rect, float radius, Bitmap bg, int screenW, int screenH, int a) {
-            BitmapShader s = shader(bg);
-            matrix.setScale(screenW / (float) bg.getWidth(), screenH / (float) bg.getHeight());
-            s.setLocalMatrix(matrix);
-            through.setShader(s);
-            through.setAlpha(a);
-            c.drawRoundRect(rect, radius, radius, through);
-            through.setShader(null);
-        }
-
-        /** Two backgrounds alternate during a crossfade: one shader per bitmap, made once. */
-        private final Map<Bitmap, BitmapShader> shaders = new HashMap<>();
-
-        private BitmapShader shader(Bitmap b) {
-            BitmapShader s = shaders.get(b);
-            if (s == null) {
-                if (shaders.size() > 3) shaders.clear();
-                s = new BitmapShader(b, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
-                shaders.put(b, s);
-            }
-            return s;
-        }
-
-        /** The soft shadow under the panel: a blurred rounded rectangle, made once per size (blur is software only). */
-        private void drawShadow(Canvas c, RectF rect, float radius, float alpha) {
-            int w = Math.round(rect.width()), h = Math.round(rect.height()), blur = Math.max(2, Math.round(18 * k));
-            String key = w + "x" + h;
-            Bitmap b = shadows.get(key);
-            if (b == null) {
-                if (shadows.size() > 6) shadows.clear();
-                b = Bitmap.createBitmap(w + 4 * blur, h + 4 * blur, Bitmap.Config.ALPHA_8);
-                Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-                p.setMaskFilter(new BlurMaskFilter(blur, BlurMaskFilter.Blur.NORMAL));
-                new Canvas(b).drawRoundRect(2 * blur, 2 * blur, 2 * blur + w, 2 * blur + h, radius, radius, p);
-                shadows.put(key, b);
-            }
-            shadowPaint.setAlpha(Math.round(46 * alpha));
-            c.drawBitmap(b, rect.left - 2 * blur, rect.top - 2 * blur + 8 * k, shadowPaint);
-        }
+        private static final int FILL = 0xFF0E0F13, EDGE = 0x24FFFFFF;
     }
 }

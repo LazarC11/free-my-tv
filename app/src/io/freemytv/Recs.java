@@ -685,6 +685,70 @@ final class Recs {
         }
     }
 
+    /**
+     * The title's official wide art from TMDB (1280 px), found by name ("tv", "movie" or null: either), or null: the
+     * key art with the title written on it (an English backdrop, as Netflix shows it), else its best-rated backdrop,
+     * else the one the search gives.
+     */
+    Bitmap backdropFor(String title, String kind) throws IOException {
+        if (title == null || title.isEmpty()) return null;
+        JSONObject found;
+        try {
+            found = get("/search/" + (kind == null ? "multi" : kind) + "?query=" + URLEncoder.encode(title, "UTF-8"));
+        } catch (org.json.JSONException e) {
+            return null;
+        }
+        JSONArray results = found.optJSONArray("results");
+        JSONObject hit = null;
+        for (int i = 0; results != null && i < results.length() && hit == null; i++) {
+            JSONObject o = results.optJSONObject(i);
+            if (o == null || "person".equals(o.optString("media_type"))) continue;
+            hit = o;
+        }
+        if (hit == null) return null;
+        String type = kind != null ? kind : hit.optString("media_type", "movie");
+        String path = officialArt(type, hit.optLong("id"));
+        if (path == null) {
+            String p = hit.optString("backdrop_path", "");
+            if (!p.isEmpty() && !p.equals("null")) path = p;
+        }
+        if (path == null) return null;
+        HttpURLConnection h = (HttpURLConnection) new URL("https://image.tmdb.org/t/p/w1280" + path).openConnection();
+        h.setConnectTimeout(10_000);
+        h.setReadTimeout(20_000);
+        try (InputStream in = h.getInputStream()) {
+            return BitmapFactory.decodeStream(in);
+        } finally {
+            h.disconnect();
+        }
+    }
+
+    /** The title's key art (an English backdrop: the title written on it), else its best-rated backdrop; or null. */
+    private String officialArt(String type, long id) {
+        if (id == 0) return null;
+        try {
+            JSONArray backdrops = get("/" + type + "/" + id + "/images?include_image_language=en,null").optJSONArray("backdrops");
+            String best = null, keyArt = null;
+            double bestVote = -1, keyVote = -1;
+            for (int i = 0; backdrops != null && i < backdrops.length(); i++) {
+                JSONObject b = backdrops.optJSONObject(i);
+                if (b == null || b.optInt("width") < 1280) continue;
+                double vote = b.optDouble("vote_average", 0) * 1000 + b.optInt("vote_count");
+                if ("en".equals(b.optString("iso_639_1")) && vote > keyVote) {
+                    keyVote = vote;
+                    keyArt = b.optString("file_path");
+                }
+                if (vote > bestVote) {
+                    bestVote = vote;
+                    best = b.optString("file_path");
+                }
+            }
+            return keyArt != null ? keyArt : best;
+        } catch (IOException | org.json.JSONException e) {
+            return null;
+        }
+    }
+
     private JSONObject get(String path) throws IOException, org.json.JSONException {
         String key = readKey();
         if (key == null) throw new IOException("no TMDB key");
